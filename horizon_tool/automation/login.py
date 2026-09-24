@@ -24,13 +24,29 @@ class LoginSession:
         self._opened = threading.Event()
         self._decided = threading.Event()
         self._cancelled = False
+        self.error: Exception | None = None
+
+    @property
+    def opened_ok(self) -> bool:
+        """True once the browser opened successfully (no factory/start error)."""
+        return self._opened.is_set() and self.error is None
 
     def open(self) -> None:
-        """Create and start the browser, then navigate to the login URL."""
-        self._session = self._factory()
-        self._session.start()
-        self._session.goto(self._url)
-        self._opened.set()
+        """Create and start the browser, then navigate to the login URL.
+
+        On any failure the error is recorded and `_opened` is still set so a
+        controlling thread waiting on it never blocks forever; the exception is
+        re-raised for the caller (see `run`).
+        """
+        try:
+            self._session = self._factory()
+            self._session.start()
+            self._session.goto(self._url)
+        except Exception as exc:  # noqa: BLE001 - recorded and re-raised
+            self.error = exc
+            raise
+        finally:
+            self._opened.set()
 
     def confirm(self) -> None:
         """User finished logging in."""
@@ -42,13 +58,26 @@ class LoginSession:
         self._decided.set()
 
     def wait_and_close(self) -> bool:
-        """Block until confirm/cancel, close the browser, return success."""
+        """Block until confirm/cancel, close the browser, return success.
+
+        Reading `_cancelled` after `_decided.wait()` is safe: setting an Event
+        establishes a happens-before edge for the waiting thread.
+        """
         self._decided.wait()
         if self._session is not None:
             self._session.close()
         return not self._cancelled
 
     def run(self) -> bool:
-        """Full lifecycle for a worker thread: open, wait, close."""
-        self.open()
+        """Full lifecycle for a worker thread: open, wait, close.
+
+        Returns False if the browser failed to open (never blocks), otherwise
+        waits for the user's confirm/cancel decision.
+        """
+        try:
+            self.open()
+        except Exception:  # noqa: BLE001 - reported via `error`; surfaced as False
+            if self._session is not None:
+                self._session.close()
+            return False
         return self.wait_and_close()

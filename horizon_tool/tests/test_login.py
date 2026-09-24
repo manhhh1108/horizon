@@ -27,6 +27,8 @@ def test_open_starts_and_navigates():
     assert fake.started is True
     assert fake.url == "https://chatgpt.com/"
     assert fake.closed is False
+    assert login._opened.is_set()
+    assert login.opened_ok is True
 
 
 def test_confirm_closes_and_reports_success():
@@ -59,3 +61,26 @@ def test_run_blocks_until_confirmed_in_thread():
     t.join(timeout=2)
     assert result["ok"] is True
     assert fake.closed is True
+
+
+class ExplodingFactory:
+    """A session whose start() fails, to test the failure path."""
+    def start(self):
+        raise RuntimeError("Chromium không khởi động được")
+    def goto(self, url, timeout_ms=None):  # pragma: no cover - never reached
+        pass
+    def close(self):  # pragma: no cover
+        pass
+
+
+def test_run_returns_false_and_unblocks_on_open_failure():
+    login = LoginSession("https://x/", session_factory=ExplodingFactory)
+    result = {}
+    t = threading.Thread(target=lambda: result.setdefault("ok", login.run()))
+    t.start()
+    # A controller waiting on _opened must not hang even though open() failed.
+    assert login._opened.wait(timeout=2) is True
+    t.join(timeout=2)
+    assert result["ok"] is False
+    assert login.opened_ok is False
+    assert login.error is not None
