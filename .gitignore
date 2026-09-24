@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# App runtime data (never commit sensitive/user data)
+horizon_tool/profiles/
+horizon_tool/state/
+horizon_tool/output/
+horizon_tool/plugins/_history/
+*.plugin
+*.license
+
+# Logs
+*.log
+log.txt
+
+# Build artifacts
+build/
+dist/
+*.spec.bak
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
