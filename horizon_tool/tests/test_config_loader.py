@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from horizon_tool.core.config_loader import load_yaml, AppConfig
 
 CONFIG_DIR = Path(__file__).resolve().parents[1] / "config"
@@ -20,6 +22,5 @@ def test_appconfig_exposes_gui_values():
 
 
 def test_load_yaml_missing_file_raises():
-    import pytest
     with pytest.raises(FileNotFoundError):
         load_yaml(CONFIG_DIR / "does_not_exist.yaml")
