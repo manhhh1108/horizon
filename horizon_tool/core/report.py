@@ -6,7 +6,7 @@ from pathlib import Path
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 
-STATUS_REJECTED = "Bị từ chối"
+from horizon_tool.core.statuses import STATUS_REJECTED  # re-exported for callers
 
 _HEADERS = [
     "STT", "File input", "Plugin", "Hash", "Tài khoản",

@@ -12,11 +12,41 @@ from typing import Callable
 
 from horizon_tool.automation.browser import BrowserSession
 from horizon_tool.core.section_parser import merge_continue_parts
+from horizon_tool.core.statuses import STATUS_DONE, STATUS_FAILED, STATUS_REJECTED
 
 
 def should_continue(response_text: str, continue_regex: str) -> bool:
     """True if a response contains a [PART X COMPLETE …] marker."""
     return re.search(continue_regex, response_text, flags=re.IGNORECASE) is not None
+
+
+def detect_refusal(response_text: str, refusal_patterns: list[str]) -> bool:
+    """True if the response matches any policy-refusal pattern (case-insensitive)."""
+    return any(
+        re.search(p, response_text, flags=re.IGNORECASE) for p in refusal_patterns
+    )
+
+
+@dataclass
+class ImageRenderResult:
+    """Outcome of rendering one image."""
+
+    status: str                 # STATUS_DONE / STATUS_REJECTED / STATUS_FAILED
+    path: str | None = None
+    reason: str = ""
+
+
+def resolve_image(response_text: str, refusal_patterns: list[str],
+                  download) -> "ImageRenderResult":
+    """Decide the outcome of an image response.
+
+    On a policy refusal: return REJECTED and do NOT download or retry. Otherwise
+    call `download()` (which saves the image and returns its path) and return DONE.
+    """
+    if detect_refusal(response_text, refusal_patterns):
+        return ImageRenderResult(status=STATUS_REJECTED, reason="Vi phạm chính sách")
+    path = download()
+    return ImageRenderResult(status=STATUS_DONE, path=path)
 
 
 def run_continue_loop(read_response: Callable[[], str],
@@ -136,3 +166,37 @@ class ChatGPTWriter:
         # TODO: kiểm tra selector thực tế — detect a .docx download link and
         # save it. Returns None if ChatGPT returned text only.
         return None
+
+    def render_image(self, prompt: str, wrapper: str, dest_path: str) -> ImageRenderResult:
+        """Render one image in a NEW chat and save it to dest_path.
+
+        The wrapper wraps the section prompt (its {PROMPT} placeholder is
+        replaced). On a policy refusal the image is skipped (no retry). DOM
+        selectors are placeholders tuned against the live site.
+        """
+        self._open_new_chat()
+        message = wrapper.replace("{PROMPT}", prompt)
+        self._send(message)
+        response_text = self._read_last_response()
+        refusal_patterns = self.selectors["patterns"]["policy_refusal"]
+        return resolve_image(
+            response_text, refusal_patterns,
+            download=lambda: self._download_image(dest_path),
+        )
+
+    def _download_image(self, dest_path: str) -> str:
+        # TODO: kiểm tra selector thực tế — locate the generated image, get the
+        # highest-resolution source, and save it to dest_path. Returns dest_path.
+        sel = self.selectors["chatgpt"]
+        self.session.wait_for(sel["generated_image"])
+        loc = self.session.page.locator(sel["generated_image"]).last
+        src = loc.get_attribute("src")
+        # A real implementation downloads `src` (or the full-res variant) to
+        # dest_path via the browser context request. Placeholder for live tuning.
+        self._save_image_from_src(src, dest_path)
+        return dest_path
+
+    def _save_image_from_src(self, src: str | None, dest_path: str) -> None:
+        # TODO: kiểm tra selector thực tế — fetch the image bytes (handles data:
+        # URIs and https URLs via the page context) and write them to dest_path.
+        raise NotImplementedError("Image download must be tuned on the live site")
