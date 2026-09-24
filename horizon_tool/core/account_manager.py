@@ -6,9 +6,13 @@ session cookies live inside each account's own browser profile directory.
 from __future__ import annotations
 
 import json
+import logging
+import shutil
+from dataclasses import asdict, dataclass, fields
 import os
-from dataclasses import asdict, dataclass
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 SERVICE_CHATGPT = "chatgpt"
 SERVICE_GROK = "grok"
@@ -18,6 +22,7 @@ STATUS_READY = "ready"
 STATUS_IN_USE = "in_use"
 STATUS_QUOTA = "quota_exhausted"
 STATUS_SESSION_EXPIRED = "session_expired"
+STATUSES = (STATUS_READY, STATUS_IN_USE, STATUS_QUOTA, STATUS_SESSION_EXPIRED)
 
 
 @dataclass
@@ -38,7 +43,9 @@ class Account:
 
     @classmethod
     def from_dict(cls, data: dict) -> "Account":
-        return cls(**data)
+        # Tolerate unknown keys from a newer/older on-disk format.
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in known})
 
 
 class AccountStore:
@@ -52,11 +59,25 @@ class AccountStore:
         self._accounts = {}
         if not self.path.exists():
             return
-        with self.path.open("r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        for item in data.get("accounts", []):
+        try:
+            with self.path.open("r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            items = data.get("accounts", [])
+        except (json.JSONDecodeError, OSError, AttributeError) as exc:
+            # A corrupt state file must never crash startup; start empty and
+            # keep the bad file aside for inspection.
+            logger.warning("Không đọc được file tài khoản (%s); bắt đầu rỗng.", exc)
+            self._quarantine_corrupt_file()
+            return
+        for item in items:
             acc = Account.from_dict(item)
             self._accounts[acc.id] = acc
+
+    def _quarantine_corrupt_file(self) -> None:
+        try:
+            os.replace(self.path, self.path.with_suffix(self.path.suffix + ".corrupt"))
+        except OSError:
+            pass
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -73,7 +94,10 @@ class AccountStore:
         self._accounts.pop(account_id, None)
 
     def get(self, account_id: str) -> Account:
-        return self._accounts[account_id]
+        try:
+            return self._accounts[account_id]
+        except KeyError:
+            raise KeyError(f"Account not found: {account_id!r}") from None
 
     def all(self) -> list[Account]:
         return list(self._accounts.values())
@@ -113,6 +137,13 @@ class AccountManager:
         return account
 
     def remove(self, account_id: str) -> None:
+        # Delete the browser profile too, so a later account that happens to
+        # reuse this id can never inherit these login/session cookies.
+        try:
+            account = self._store.get(account_id)
+            shutil.rmtree(account.profile_dir, ignore_errors=True)
+        except KeyError:
+            pass
         self._store.remove(account_id)
         self._store.save()
 
@@ -130,6 +161,8 @@ class AccountManager:
 
     def set_status(self, account_id: str, status: str,
                    quota_reset_at: str | None = None) -> None:
+        if status not in STATUSES:
+            raise ValueError(f"Unknown status: {status!r}")
         account = self._store.get(account_id)
         account.status = status
         account.quota_reset_at = quota_reset_at

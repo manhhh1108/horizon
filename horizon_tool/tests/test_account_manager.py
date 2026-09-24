@@ -71,3 +71,37 @@ def test_next_available_none_when_all_unavailable(tmp_path):
     a = mgr.add(SERVICE_GROK, "A")
     mgr.set_status(a.id, STATUS_SESSION_EXPIRED)
     assert mgr.next_available(SERVICE_GROK) is None
+
+
+def test_remove_deletes_profile_directory(tmp_path):
+    mgr = make_manager(tmp_path)
+    a = mgr.add(SERVICE_CHATGPT, "A")
+    profile = tmp_path / "profiles" / a.id
+    (profile / "cookies").write_text("secret-session", encoding="utf-8")
+    assert profile.is_dir()
+    mgr.remove(a.id)
+    assert not profile.exists()  # session cookies gone, no stale reuse
+
+
+def test_set_status_rejects_unknown_value(tmp_path):
+    mgr = make_manager(tmp_path)
+    a = mgr.add(SERVICE_CHATGPT, "A")
+    with pytest.raises(ValueError):
+        mgr.set_status(a.id, "STATUS_QOUTA")  # typo -> rejected
+
+
+def test_corrupt_store_file_starts_empty(tmp_path):
+    path = tmp_path / "accounts.json"
+    path.write_text("{ this is not valid json", encoding="utf-8")
+    mgr = AccountManager(store_path=path, profiles_root=tmp_path / "profiles")
+    assert mgr.list() == []                       # started empty, no crash
+    assert (tmp_path / "accounts.json.corrupt").exists()  # bad file quarantined
+
+
+def test_from_dict_tolerates_unknown_keys(tmp_path):
+    from horizon_tool.core.account_manager import Account
+    acc = Account.from_dict({
+        "id": "chatgpt_1", "service": SERVICE_CHATGPT, "display_name": "A",
+        "profile_dir": "p", "future_field": "ignored",
+    })
+    assert acc.id == "chatgpt_1"
