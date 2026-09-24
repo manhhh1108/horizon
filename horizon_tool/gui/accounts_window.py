@@ -6,6 +6,7 @@ through AccountManager, which persists immediately.
 """
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QTableWidget,
     QTableWidgetItem, QPushButton, QInputDialog, QMessageBox, QWidget,
@@ -74,14 +75,14 @@ class AccountsWindow(QDialog):
             table.setItem(row, 0, QTableWidgetItem(acc.display_name))
             table.setItem(row, 1, QTableWidgetItem(acc.status))
             table.setItem(row, 2, QTableWidgetItem("Có" if acc.enabled else "Không"))
-            table.item(row, 0).setData(0x0100, acc.id)  # Qt.UserRole = 256
+            table.item(row, 0).setData(Qt.UserRole, acc.id)
 
     def _selected_account_id(self, service: str) -> str | None:
         table = self.tables[service]
         row = table.currentRow()
         if row < 0 or table.item(row, 0) is None:
             return None
-        return table.item(row, 0).data(0x0100)
+        return table.item(row, 0).data(Qt.UserRole)
 
     # ----- operations (testable, dialog-free) -----------------------------
     def add_account(self, service: str, display_name: str) -> Account:

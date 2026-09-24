@@ -28,7 +28,26 @@ def test_add_account_shows_in_table(qtbot, tmp_path):
     table = win.tables[SERVICE_CHATGPT]
     assert table.rowCount() == 1
     assert table.item(0, 0).text() == "Tài khoản A"
+    assert table.item(0, 1).text() == "ready"   # status column
+    assert table.item(0, 2).text() == "Có"      # enabled column
     assert len(mgr.list(SERVICE_CHATGPT)) == 1
+
+
+def test_rename_reflects_in_table(qtbot, tmp_path):
+    win, mgr = make_window(tmp_path)
+    qtbot.addWidget(win)
+    acc = win.add_account(SERVICE_CHATGPT, "Cũ")
+    mgr.rename(acc.id, "Mới")
+    win._refresh(SERVICE_CHATGPT)
+    assert win.tables[SERVICE_CHATGPT].item(0, 0).text() == "Mới"
+
+
+def test_toggle_enabled_updates_column(qtbot, tmp_path):
+    win, mgr = make_window(tmp_path)
+    qtbot.addWidget(win)
+    acc = win.add_account(SERVICE_CHATGPT, "A")
+    win.set_enabled(acc.id, False)
+    assert win.tables[SERVICE_CHATGPT].item(0, 2).text() == "Không"
 
 
 def test_remove_selected_account(qtbot, tmp_path):
