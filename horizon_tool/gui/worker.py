@@ -1,9 +1,12 @@
-"""Background worker thread. Phase 1 stub: proves threading + signal wiring
-without any browser automation. Replaced by the real pipeline in later phases.
-"""
+"""Background worker thread. Phase 1 stub + Phase 3 real pipeline worker."""
 from __future__ import annotations
 
+from pathlib import Path
+
 from PySide6.QtCore import QThread, Signal
+
+from horizon_tool.core.input_reader import scan_input_folder, filter_by_selection, read_script_content
+from horizon_tool.core.pipeline import process_script
 
 
 class PipelineWorker(QThread):
@@ -41,4 +44,62 @@ class PipelineWorker(QThread):
             self.progress.emit(ordinal, "Xong (giả lập)")
             self.log.emit(f"Đã xử lý (giả lập) kịch bản {ordinal}.")
             self.processed += 1
+        self.done.emit()
+
+
+class ScriptRunWorker(QThread):
+    """Runs the Phase-3 script->Word pipeline over an input folder.
+
+    `writer_factory(account) -> ScriptWriter` builds the ChatGPT writer; it is
+    injected so the worker can be exercised without a real browser. Cooperative
+    pause/stop at script boundaries.
+    """
+
+    log = Signal(str)
+    progress = Signal(int, str)      # (ordinal, status)
+    done = Signal()
+
+    def __init__(self, *, input_dir: str, output_dir: str, selection: str,
+                 plugin_text: str, heading_regexes: dict, writer_factory,
+                 parent=None) -> None:
+        super().__init__(parent)
+        self._input_dir = Path(input_dir)
+        self._output_dir = Path(output_dir)
+        self._selection = selection
+        self._plugin_text = plugin_text
+        self._heading_regexes = heading_regexes
+        self._writer_factory = writer_factory
+        self._stop = False
+
+    def request_stop(self) -> None:
+        self._stop = True
+
+    def run(self) -> None:  # noqa: D401 - QThread entry point
+        scripts, skipped = scan_input_folder(self._input_dir)
+        scripts = filter_by_selection(scripts, self._selection)
+        for s in skipped:
+            self.log.emit(f"Bỏ qua {s.path.name}: {s.reason}")
+        for script in scripts:
+            if self._stop:
+                self.log.emit("Đã dừng theo yêu cầu.")
+                break
+            self.progress.emit(script.ordinal, "Đang chạy")
+            try:
+                out_dir = self._output_dir / str(script.ordinal)
+                out_dir.mkdir(parents=True, exist_ok=True)
+                writer = self._writer_factory()
+                outcome = process_script(
+                    writer=writer, ordinal=script.ordinal, output_dir=out_dir,
+                    plugin_text=self._plugin_text,
+                    script_text=read_script_content(script.path),
+                    heading_regexes=self._heading_regexes,
+                )
+                if outcome.missing_sections:
+                    self.log.emit(
+                        f"Kịch bản {script.ordinal}: thiếu {len(outcome.missing_sections)} section")
+                self.progress.emit(script.ordinal, outcome.word_status)
+                self.log.emit(f"Xong kịch bản {script.ordinal} -> {out_dir / str(script.ordinal)}.docx")
+            except Exception as exc:  # noqa: BLE001 - one script must not stop the run
+                self.progress.emit(script.ordinal, "Lỗi")
+                self.log.emit(f"Lỗi kịch bản {script.ordinal}: {exc}")
         self.done.emit()
