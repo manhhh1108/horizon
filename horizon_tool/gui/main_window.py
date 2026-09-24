@@ -204,11 +204,26 @@ class MainWindow(QMainWindow):
         self.worker.start()
 
     def _on_progress(self, ordinal: int, status: str) -> None:
-        """Append a progress row (runs on the GUI thread via a queued signal)."""
-        row = self.table.rowCount()
-        self.table.insertRow(row)
-        self.table.setItem(row, 0, QTableWidgetItem(str(ordinal)))
+        """Upsert the row for `ordinal`, setting the script-step status.
+
+        Runs on the GUI thread (queued signal). One row per script: the same
+        ordinal receiving 'Đang chạy' then 'Xong' updates the row in place
+        instead of inserting a duplicate. Column 2 is the "Kịch bản" step.
+        """
+        row = self._row_for_ordinal(ordinal)
+        if row is None:
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            self.table.setItem(row, 0, QTableWidgetItem(str(ordinal)))
         self.table.setItem(row, 2, QTableWidgetItem(status))
+
+    def _row_for_ordinal(self, ordinal: int) -> int | None:
+        """Return the existing table row for a script ordinal, or None."""
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 0)
+            if item is not None and item.text() == str(ordinal):
+                return row
+        return None
 
     def _set_paused(self, paused: bool) -> None:
         if self.worker is not None and hasattr(self.worker, "set_paused"):

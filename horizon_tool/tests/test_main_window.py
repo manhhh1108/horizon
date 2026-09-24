@@ -63,3 +63,17 @@ def test_start_without_inputs_shows_message(qtbot):
     win.on_start()  # no input/output/plugin selected
     assert "Hãy chọn thư mục input" in win.log_pane.toPlainText()
     assert win.worker is None
+
+
+def test_progress_upserts_one_row_per_script(qtbot):
+    app = QApplication.instance() or QApplication([])
+    win = MainWindow(AppConfig.load(CONFIG))
+    qtbot.addWidget(win)
+    # Same ordinal reported twice (running -> done) must update, not duplicate.
+    win._on_progress(1, "Đang chạy")
+    win._on_progress(1, "Xong")
+    win._on_progress(2, "Đang chạy")
+    assert win.table.rowCount() == 2
+    assert win.table.item(0, 0).text() == "1"
+    assert win.table.item(0, 2).text() == "Xong"   # updated in place
+    assert win.table.item(1, 2).text() == "Đang chạy"

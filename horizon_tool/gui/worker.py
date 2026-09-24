@@ -119,9 +119,12 @@ class ScriptRunWorker(QThread):
                         f"Kịch bản {script.ordinal}: thiếu {len(outcome.missing_sections)} section")
                 self.progress.emit(script.ordinal, outcome.word_status)
                 self.log.emit(f"Xong kịch bản {script.ordinal} -> {out_dir / str(script.ordinal)}.docx")
+                # TODO (Phase 6): add a ReportWriter row here (ordinal, plugin+hash,
+                # account, word/img/video status, missing sections, duration).
             except Exception as exc:  # noqa: BLE001 - one script must not stop the run
                 self.progress.emit(script.ordinal, STATUS_FAILED)
                 self.log.emit(f"Lỗi kịch bản {script.ordinal}: {exc}")
+                # TODO (Phase 6): add a ReportWriter row with error=str(exc).
             finally:
                 if writer is not None:
                     _close_writer(writer)  # never leak a browser between scripts
