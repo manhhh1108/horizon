@@ -6,8 +6,9 @@ from pathlib import Path
 from PySide6.QtCore import QThread, Signal
 
 from horizon_tool.core.input_reader import scan_input_folder, filter_by_selection, read_script_content
-from horizon_tool.core.pipeline import process_script, render_images
-from horizon_tool.core.statuses import STATUS_RUNNING, STATUS_FAILED, STATUS_REJECTED
+from horizon_tool.core.pipeline import process_script, render_images, make_video
+from horizon_tool.core.statuses import STATUS_RUNNING, STATUS_FAILED, STATUS_REJECTED, STATUS_DONE, STATUS_SKIPPED
+from horizon_tool.core.output_manager import output_paths
 
 
 def _close_writer(writer) -> None:
@@ -73,6 +74,8 @@ class ScriptRunWorker(QThread):
     def __init__(self, *, input_dir: str, output_dir: str, selection: str,
                  plugin_text: str, heading_regexes: dict, writer_factory,
                  do_9x16: bool = True, do_16x9: bool = True,
+                 do_video: bool = True, video_maker_factory=None,
+                 video_duration: str = "", video_quality: str = "",
                  config: dict | None = None, parent=None) -> None:
         super().__init__(parent)
         self._input_dir = Path(input_dir)
@@ -83,6 +86,10 @@ class ScriptRunWorker(QThread):
         self._writer_factory = writer_factory
         self._do_9x16 = do_9x16
         self._do_16x9 = do_16x9
+        self._do_video = do_video
+        self._video_maker_factory = video_maker_factory
+        self._video_duration = video_duration
+        self._video_quality = video_quality
         self._config = config or {}
         self._stop = False
         self._paused = False
@@ -142,12 +149,43 @@ class ScriptRunWorker(QThread):
                     if status == STATUS_REJECTED:
                         self.log.emit(
                             f"Kịch bản {script.ordinal} ảnh {label} bị từ chối (vi phạm chính sách) — bỏ qua, không thử lại.")
+
+                # Video step: needs the 9:16 image. Uses a SEPARATE Grok session.
+                img_9x16_path = str(output_paths(out_dir, script.ordinal)["img_9x16"])
+                have_9x16 = img["img_9x16"] == STATUS_DONE
+                if not self._do_video:
+                    self.step_status.emit(script.ordinal, "video", STATUS_SKIPPED)
+                elif not have_9x16:
+                    self.step_status.emit(script.ordinal, "video", STATUS_SKIPPED)
+                    self.log.emit(f"Kịch bản {script.ordinal}: không có ảnh 9:16 — bỏ qua video.")
+                elif self._video_maker_factory is None:
+                    self.step_status.emit(script.ordinal, "video", STATUS_SKIPPED)
+                else:
+                    maker = None
+                    try:
+                        maker = self._video_maker_factory()
+                        v_status = make_video(
+                            maker=maker, output_dir=out_dir, ordinal=script.ordinal,
+                            config=self._config, motion_prompt=outcome.video_prompt,
+                            duration=self._video_duration, quality=self._video_quality,
+                            image_path=img_9x16_path, do_video=True,
+                        )
+                    finally:
+                        if maker is not None:
+                            _close_writer(maker)  # closes maker.session too
+                    self.step_status.emit(script.ordinal, "video", v_status)
+                    if v_status == STATUS_REJECTED:
+                        self.log.emit(
+                            f"Kịch bản {script.ordinal} video bị từ chối — bỏ qua, không thử lại.")
+                    else:
+                        self.log.emit(f"Video kịch bản {script.ordinal}: {v_status}")
             except Exception as exc:  # noqa: BLE001 - one script must not stop the run
                 # The script that produces the image prompts failed, so every
                 # column resolves to a terminal state (no blank cells).
                 self.step_status.emit(script.ordinal, "word", STATUS_FAILED)
                 self.step_status.emit(script.ordinal, "img_9x16", STATUS_FAILED)
                 self.step_status.emit(script.ordinal, "img_16x9", STATUS_FAILED)
+                self.step_status.emit(script.ordinal, "video", STATUS_FAILED)
                 self.log.emit(f"Lỗi kịch bản {script.ordinal}: {exc}")
                 # TODO (Phase 6): add a ReportWriter row with error=str(exc).
             finally:

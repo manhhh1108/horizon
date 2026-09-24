@@ -191,6 +191,18 @@ class MainWindow(QMainWindow):
             session.start()
             return ChatGPTWriter(session, selectors, self.config.raw)
 
+        from horizon_tool.automation.grok import GrokVideoMaker
+
+        def video_maker_factory():
+            account = self.account_manager.next_available("grok")
+            if account is None:
+                raise RuntimeError("Không có tài khoản Grok khả dụng.")
+            session = BrowserSession(
+                account.profile_dir, headless=False,
+                element_timeout_ms=self.config.raw.get("timeouts", {}).get("element_wait_seconds", 30) * 1000)
+            session.start()
+            return GrokVideoMaker(session, selectors, self.config.raw)
+
         self.table.setRowCount(0)
         self.worker = ScriptRunWorker(
             input_dir=input_dir, output_dir=output_dir,
@@ -199,6 +211,10 @@ class MainWindow(QMainWindow):
             writer_factory=writer_factory,
             do_9x16=self.step_img_9x16.isChecked(),
             do_16x9=self.step_thumb_16x9.isChecked(),
+            do_video=self.step_video.isChecked(),
+            video_maker_factory=video_maker_factory,
+            video_duration=self.duration_combo.currentText(),
+            video_quality=self.quality_combo.currentText(),
             config=self.config.raw, parent=self,
         )
         self.worker.log.connect(self.append_log)
