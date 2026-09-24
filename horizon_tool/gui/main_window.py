@@ -8,10 +8,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PySide6.QtCore import QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
     QLineEdit, QPushButton, QComboBox, QCheckBox, QPlainTextEdit,
-    QTableWidget, QTableWidgetItem, QFileDialog, QGroupBox,
+    QTableWidget, QTableWidgetItem, QFileDialog, QGroupBox,  # noqa: F401  QTableWidgetItem used from Phase 2
 )
 
 from horizon_tool.core.config_loader import AppConfig
@@ -44,6 +46,7 @@ class MainWindow(QMainWindow):
         root.addWidget(self._build_stats())
 
         self.refresh_plugins()
+        self._set_running_state(False)  # idle: only Start enabled
 
     # ----- builders -------------------------------------------------------
     def _build_io_group(self) -> QGroupBox:
@@ -73,6 +76,7 @@ class MainWindow(QMainWindow):
         reload_btn = QPushButton("Tải lại")
         open_btn = QPushButton("Mở file")
         reload_btn.clicked.connect(self.refresh_plugins)
+        open_btn.clicked.connect(self.open_selected_plugin)
         layout.addWidget(QLabel("Plugin:"))
         layout.addWidget(self.plugin_combo, stretch=1)
         layout.addWidget(open_btn)
@@ -99,10 +103,10 @@ class MainWindow(QMainWindow):
     def _build_controls(self) -> QWidget:
         w = QWidget()
         layout = QHBoxLayout(w)
-        self.start_btn = QPushButton("Start")
-        self.pause_btn = QPushButton("Pause")
-        self.resume_btn = QPushButton("Resume")
-        self.stop_btn = QPushButton("Stop")
+        self.start_btn = QPushButton("Bắt đầu")
+        self.pause_btn = QPushButton("Tạm dừng")
+        self.resume_btn = QPushButton("Tiếp tục")
+        self.stop_btn = QPushButton("Dừng")
         self.accounts_btn = QPushButton("Quản lý tài khoản")
         self.settings_btn = QPushButton("Cài đặt")
         self.start_btn.clicked.connect(self.on_start)
@@ -134,6 +138,13 @@ class MainWindow(QMainWindow):
         for p in list_plugins(PLUGINS_DIR):
             self.plugin_combo.addItem(p.name, userData=str(p))
 
+    def open_selected_plugin(self) -> None:
+        """Open the selected plugin file with the OS default app (PL-04)."""
+        path = self.plugin_combo.currentData()
+        if not path:
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
     def _pick_folder(self, target: QLineEdit) -> None:
         folder = QFileDialog.getExistingDirectory(self, "Chọn thư mục")
         if folder:
@@ -144,8 +155,12 @@ class MainWindow(QMainWindow):
 
     def on_start(self) -> None:
         # Phase 1: run the stub worker over a dummy list to prove wiring.
+        if self.worker is not None and self.worker.isRunning():
+            return  # ignore re-clicks while a run is in progress
         self.worker = PipelineWorker(scripts=[1, 2, 3])
         self.worker.log.connect(self.append_log)
+        self.worker.done.connect(self._on_worker_done)
+        self._set_running_state(True)
         self.worker.start()
 
     def _set_paused(self, paused: bool) -> None:
@@ -155,3 +170,14 @@ class MainWindow(QMainWindow):
     def on_stop(self) -> None:
         if self.worker is not None:
             self.worker.request_stop()
+
+    def _on_worker_done(self) -> None:
+        """Runs on the GUI thread (queued signal) when the worker finishes."""
+        self._set_running_state(False)
+
+    def _set_running_state(self, running: bool) -> None:
+        """Toggle control buttons so a run cannot be started twice."""
+        self.start_btn.setEnabled(not running)
+        self.pause_btn.setEnabled(running)
+        self.resume_btn.setEnabled(running)
+        self.stop_btn.setEnabled(running)
