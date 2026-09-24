@@ -31,9 +31,14 @@ def test_renders_both_images(tmp_path):
         do_9x16=True, do_16x9=True)
     assert out["img_9x16"] == STATUS_DONE
     assert out["img_16x9"] == STATUS_DONE
-    # correct wrappers applied and prompts substituted
-    assert any("9:16 ratio:\na vertical scene" == c[0] or
-               c[1].replace("{PROMPT}", c[0]) for c in writer.calls)
+    # Each image got its own prompt + un-expanded wrapper; render_image applies
+    # the {PROMPT} substitution itself (verified in test_image_render).
+    call_9x16 = next(c for c in writer.calls if "9x16" in c[2])
+    call_16x9 = next(c for c in writer.calls if "16x9" in c[2])
+    assert call_9x16[0] == "a vertical scene"
+    assert call_9x16[1] == "9:16 ratio:\n{PROMPT}"
+    assert call_16x9[0] == "a key art"
+    assert call_16x9[1] == "16:9 ratio:\n{PROMPT}"
 
 
 def test_rejection_is_recorded_without_retry(tmp_path):
@@ -67,3 +72,23 @@ def test_disabled_steps_are_skipped(tmp_path):
     assert out["img_9x16"] == STATUS_SKIPPED
     assert out["img_16x9"] == STATUS_SKIPPED
     assert writer.calls == []
+
+
+def test_render_exception_becomes_failed(tmp_path):
+    from horizon_tool.core.statuses import STATUS_FAILED
+
+    class ExplodingWriter:
+        calls = 0
+
+        def render_image(self, prompt, wrapper, dest_path):
+            ExplodingWriter.calls += 1
+            raise RuntimeError("mạng lỗi")
+
+    writer = ExplodingWriter()
+    out = render_images(
+        writer=writer, output_dir=tmp_path, ordinal=5, config=CONFIG,
+        image_9x16_prompt="p", thumbnail_16x9_prompt="q",
+        do_9x16=True, do_16x9=True)
+    assert out["img_9x16"] == STATUS_FAILED
+    assert out["img_16x9"] == STATUS_FAILED   # second image still attempted
+    assert ExplodingWriter.calls == 2         # one failing image didn't block the other

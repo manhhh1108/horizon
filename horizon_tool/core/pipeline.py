@@ -12,12 +12,8 @@ from horizon_tool.core.output_manager import output_paths, save_raw_response
 from horizon_tool.core.section_parser import parse_sections
 from horizon_tool.core.word_builder import build_document
 
-# Re-export STATUS_REJECTED so any caller that does
-# `from horizon_tool.core.pipeline import STATUS_REJECTED` still resolves.
-__all__ = [
-    "STATUS_DONE", "STATUS_FAILED", "STATUS_SKIPPED", "STATUS_REJECTED",
-    "ScriptWriter", "ScriptOutcome", "process_script", "render_images",
-]
+__all__ = ["ScriptWriter", "ImageWriter", "ScriptOutcome",
+           "process_script", "render_images"]
 
 
 class ScriptWriter(Protocol):
@@ -29,6 +25,12 @@ class ScriptWriter(Protocol):
 
     def write_script(self, plugin_text: str, script_text: str,
                      runtime_suffix: str = ""): ...
+
+
+class ImageWriter(Protocol):
+    """Anything that can render one image and return an ImageRenderResult."""
+
+    def render_image(self, prompt: str, wrapper: str, dest_path: str): ...
 
 
 @dataclass
@@ -73,8 +75,9 @@ def process_script(*, writer: ScriptWriter, ordinal: int, output_dir: Path,
     )
 
 
-def render_images(*, writer, output_dir: Path, ordinal: int, config: dict,
-                  image_9x16_prompt: str | None, thumbnail_16x9_prompt: str | None,
+def render_images(*, writer: ImageWriter, output_dir: Path, ordinal: int,
+                  config: dict, image_9x16_prompt: str | None,
+                  thumbnail_16x9_prompt: str | None,
                   do_9x16: bool = True, do_16x9: bool = True) -> dict[str, str]:
     """Render the 9:16 image and 16:9 thumbnail, returning per-step statuses.
 

@@ -7,7 +7,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import QCoreApplication  # noqa: E402
 from horizon_tool.gui.worker import ScriptRunWorker  # noqa: E402
 from horizon_tool.automation.chatgpt import ScriptResult, ImageRenderResult  # noqa: E402
-from horizon_tool.core.statuses import STATUS_DONE  # noqa: E402
+from horizon_tool.core.statuses import STATUS_DONE, STATUS_FAILED  # noqa: E402
 
 FULL = """FULL STORY
 
@@ -105,6 +105,7 @@ def test_worker_processes_folder(qtbot, tmp_path):
     assert (out / "1" / "1_9x16.png").exists()
     assert (out / "1" / "1_16x9.png").exists()
     assert any(s == "img_9x16" for _, s, _ in statuses)
+    assert any(s == "img_16x9" for _, s, _ in statuses)
     # Each script's browser session is closed after use (no Chromium leak).
     assert len(created) == 2
     assert all(w.session.closed for w in created)
@@ -151,5 +152,8 @@ def test_worker_continues_after_one_script_fails(qtbot, tmp_path):
 
     # First script failed but the second still produced its Word file.
     assert (out / "2" / "2.docx").exists()
-    assert any(st == "Lỗi" for _, _, st in statuses)
+    assert (1, "word", STATUS_FAILED) in statuses
+    # A failed script resolves ALL its columns (no blank image cells).
+    assert (1, "img_9x16", STATUS_FAILED) in statuses
+    assert (1, "img_16x9", STATUS_FAILED) in statuses
     assert worker.wait(2000)

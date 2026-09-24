@@ -138,7 +138,11 @@ class ScriptRunWorker(QThread):
                 self.log.emit(
                     f"Ảnh kịch bản {script.ordinal}: 9:16={img['img_9x16']}, 16:9={img['img_16x9']}")
             except Exception as exc:  # noqa: BLE001 - one script must not stop the run
+                # The script that produces the image prompts failed, so every
+                # column resolves to a terminal state (no blank cells).
                 self.step_status.emit(script.ordinal, "word", STATUS_FAILED)
+                self.step_status.emit(script.ordinal, "img_9x16", STATUS_FAILED)
+                self.step_status.emit(script.ordinal, "img_16x9", STATUS_FAILED)
                 self.log.emit(f"Lỗi kịch bản {script.ordinal}: {exc}")
                 # TODO (Phase 6): add a ReportWriter row with error=str(exc).
             finally:
