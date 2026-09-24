@@ -13,6 +13,10 @@ def test_detect_refusal_matches_patterns():
     assert not detect_refusal("Here is your image!", REFUSALS)
 
 
+def test_detect_refusal_is_case_insensitive():
+    assert detect_refusal("THIS IS AGAINST OUR CONTENT POLICY", REFUSALS)
+
+
 def test_resolve_image_rejects_without_downloading():
     calls = []
     def download():

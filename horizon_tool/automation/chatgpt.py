@@ -37,7 +37,7 @@ class ImageRenderResult:
 
 
 def resolve_image(response_text: str, refusal_patterns: list[str],
-                  download) -> "ImageRenderResult":
+                  download: Callable[[], str]) -> ImageRenderResult:
     """Decide the outcome of an image response.
 
     On a policy refusal: return REJECTED and do NOT download or retry. Otherwise
