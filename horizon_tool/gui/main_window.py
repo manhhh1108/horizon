@@ -16,15 +16,18 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QFileDialog, QGroupBox,
 )
 
+from horizon_tool.automation.browser import BrowserSession
+from horizon_tool.automation.chatgpt import ChatGPTWriter
 from horizon_tool.core.account_manager import AccountManager
-from horizon_tool.core.config_loader import AppConfig
-from horizon_tool.core.plugin_manager import list_plugins
+from horizon_tool.core.config_loader import AppConfig, load_yaml
+from horizon_tool.core.plugin_manager import list_plugins, read_plugin_text, apply_variables
 from horizon_tool.gui.accounts_window import AccountsWindow
-from horizon_tool.gui.worker import PipelineWorker
+from horizon_tool.gui.worker import PipelineWorker, ScriptRunWorker
 
 PLUGINS_DIR = Path(__file__).resolve().parents[1] / "plugins"
 STATE_DIR = Path(__file__).resolve().parents[1] / "state"
 PROFILES_DIR = Path(__file__).resolve().parents[1] / "profiles"
+SELECTORS_PATH = Path(__file__).resolve().parents[1] / "config" / "selectors.yaml"
 STEP_COLUMNS = ["STT", "Tên file", "Kịch bản", "Ảnh 9:16", "Ảnh 16:9", "Video"]
 
 
@@ -34,7 +37,7 @@ class MainWindow(QMainWindow):
     def __init__(self, config: AppConfig) -> None:
         super().__init__()
         self.config = config
-        self.worker: PipelineWorker | None = None
+        self.worker: PipelineWorker | ScriptRunWorker | None = None
         self.account_manager = AccountManager(
             STATE_DIR / "accounts.json", PROFILES_DIR)
         self.accounts_window: AccountsWindow | None = None
@@ -162,11 +165,38 @@ class MainWindow(QMainWindow):
         self.log_pane.appendPlainText(message)
 
     def on_start(self) -> None:
-        # Phase 1: run the stub worker over a dummy list to prove wiring.
         if self.worker is not None and self.worker.isRunning():
-            return  # ignore re-clicks while a run is in progress
+            return
+        input_dir = self.input_edit.text().strip()
+        output_dir = self.output_edit.text().strip()
+        plugin_path = self.plugin_combo.currentData()
+        if not input_dir or not output_dir or not plugin_path:
+            self.append_log("Hãy chọn thư mục input, output và plugin trước khi chạy.")
+            return
+
+        selectors = load_yaml(SELECTORS_PATH)
+        plugin_text = apply_variables(
+            read_plugin_text(Path(plugin_path)),
+            {"VIDEO_DURATION": self.duration_combo.currentText(),
+             "VIDEO_QUALITY": self.quality_combo.currentText()},
+        )
+
+        def writer_factory():
+            account = self.account_manager.next_available("chatgpt")
+            if account is None:
+                raise RuntimeError("Không có tài khoản ChatGPT khả dụng.")
+            session = BrowserSession(account.profile_dir, headless=False,
+                                     element_timeout_ms=self.config.raw.get("timeouts", {}).get("element_wait_seconds", 30) * 1000)
+            session.start()
+            return ChatGPTWriter(session, selectors, self.config.raw)
+
         self.table.setRowCount(0)
-        self.worker = PipelineWorker(scripts=[1, 2, 3])
+        self.worker = ScriptRunWorker(
+            input_dir=input_dir, output_dir=output_dir,
+            selection=self.range_edit.text().strip(), plugin_text=plugin_text,
+            heading_regexes=selectors["section_headings"],
+            writer_factory=writer_factory, parent=self,
+        )
         self.worker.log.connect(self.append_log)
         self.worker.progress.connect(self._on_progress)
         self.worker.done.connect(self._on_worker_done)
@@ -174,16 +204,30 @@ class MainWindow(QMainWindow):
         self.worker.start()
 
     def _on_progress(self, ordinal: int, status: str) -> None:
-        """Append a progress row (runs on the GUI thread via a queued signal)."""
-        row = self.table.rowCount()
-        self.table.insertRow(row)
-        self.table.setItem(row, 0, QTableWidgetItem(str(ordinal)))
+        """Upsert the row for `ordinal`, setting the script-step status.
+
+        Runs on the GUI thread (queued signal). One row per script: the same
+        ordinal receiving 'Đang chạy' then 'Xong' updates the row in place
+        instead of inserting a duplicate. Column 2 is the "Kịch bản" step.
+        """
+        row = self._row_for_ordinal(ordinal)
+        if row is None:
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            self.table.setItem(row, 0, QTableWidgetItem(str(ordinal)))
         self.table.setItem(row, 2, QTableWidgetItem(status))
 
+    def _row_for_ordinal(self, ordinal: int) -> int | None:
+        """Return the existing table row for a script ordinal, or None."""
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 0)
+            if item is not None and item.text() == str(ordinal):
+                return row
+        return None
+
     def _set_paused(self, paused: bool) -> None:
-        if self.worker is None:
-            return
-        self.worker.set_paused(paused)
+        if self.worker is not None and hasattr(self.worker, "set_paused"):
+            self.worker.set_paused(paused)
         # Only one of Pause/Resume is actionable at a time.
         self.pause_btn.setEnabled(not paused)
         self.resume_btn.setEnabled(paused)

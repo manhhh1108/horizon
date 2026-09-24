@@ -56,18 +56,24 @@ def test_open_accounts_window(qtbot, tmp_path, monkeypatch):
     assert win.accounts_window.isVisible()
 
 
-def test_run_completes_and_returns_to_idle(qtbot):
+def test_start_without_inputs_shows_message(qtbot):
     app = QApplication.instance() or QApplication([])
     win = MainWindow(AppConfig.load(CONFIG))
     qtbot.addWidget(win)
+    win.on_start()  # no input/output/plugin selected
+    assert "Hãy chọn thư mục input" in win.log_pane.toPlainText()
+    assert win.worker is None
 
-    win.on_start()
-    assert win.worker is not None
 
-    # done fires on the GUI thread and re-enables Start (waitUntil pumps events;
-    # robust against the stub finishing before we could pre-connect a signal).
-    qtbot.waitUntil(lambda: win.start_btn.isEnabled(), timeout=3000)
-    assert win.worker.processed == 3
-    # progress signal populated the table (one row per processed script).
-    assert win.table.rowCount() == 3
+def test_progress_upserts_one_row_per_script(qtbot):
+    app = QApplication.instance() or QApplication([])
+    win = MainWindow(AppConfig.load(CONFIG))
+    qtbot.addWidget(win)
+    # Same ordinal reported twice (running -> done) must update, not duplicate.
+    win._on_progress(1, "Đang chạy")
+    win._on_progress(1, "Xong")
+    win._on_progress(2, "Đang chạy")
+    assert win.table.rowCount() == 2
     assert win.table.item(0, 0).text() == "1"
+    assert win.table.item(0, 2).text() == "Xong"   # updated in place
+    assert win.table.item(1, 2).text() == "Đang chạy"
