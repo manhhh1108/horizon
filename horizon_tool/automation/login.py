@@ -44,9 +44,19 @@ class LoginSession:
             self._session.goto(self._url)
         except Exception as exc:  # noqa: BLE001 - recorded and re-raised
             self.error = exc
+            self._close_partial_session()  # never leak a half-open browser
             raise
         finally:
             self._opened.set()
+
+    def _close_partial_session(self) -> None:
+        """Close and drop the browser after a failed open (best effort)."""
+        if self._session is not None:
+            try:
+                self._session.close()
+            except Exception:  # noqa: BLE001 - already failing; swallow
+                pass
+            self._session = None
 
     def confirm(self) -> None:
         """User finished logging in."""
@@ -75,9 +85,7 @@ class LoginSession:
         waits for the user's confirm/cancel decision.
         """
         try:
-            self.open()
+            self.open()  # self-closes any partial session on failure
         except Exception:  # noqa: BLE001 - reported via `error`; surfaced as False
-            if self._session is not None:
-                self._session.close()
             return False
         return self.wait_and_close()

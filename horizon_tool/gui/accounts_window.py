@@ -135,6 +135,12 @@ class AccountsWindow(QDialog):
         self.set_enabled(account_id, not current)
 
     def _on_login(self, service: str) -> None:
+        existing = getattr(self, "_login_worker", None)
+        if existing is not None and existing.isRunning():
+            QMessageBox.information(
+                self, "Đăng nhập",
+                "Đang có một phiên đăng nhập khác. Hãy hoàn tất phiên đó trước.")
+            return
         account_id = self._selected_account_id(service)
         if account_id is None:
             QMessageBox.information(
@@ -165,6 +171,8 @@ class AccountsWindow(QDialog):
             self._login_worker.cancel()
 
     def _on_login_finished(self, service: str, ok: bool) -> None:
+        if self._login_worker is not None:
+            self._login_worker.wait(3000)  # join the finished thread cleanly
         if ok:
             QMessageBox.information(self, "Đăng nhập", "Đã lưu phiên đăng nhập.")
         self._refresh(service)

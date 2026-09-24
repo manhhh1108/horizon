@@ -28,13 +28,12 @@ class LoginWorker(QThread):
         self._session.cancel()
 
     def run(self) -> None:  # noqa: D401 - QThread entry point
+        # open() self-closes any partial browser on failure, so we only need to
+        # report success/failure here — no reaching into LoginSession internals.
         try:
             self._session.open()
         except Exception:  # noqa: BLE001 - reported to the GUI as failure
-            if self._session._session is not None:
-                self._session._session.close()
             self.finished_result.emit(False)
             return
         self.opened.emit()
-        result = self._session.wait_and_close()
-        self.finished_result.emit(result)
+        self.finished_result.emit(self._session.wait_and_close())
