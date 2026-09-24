@@ -32,6 +32,17 @@ def test_make_video_success(tmp_path):
     assert maker.calls[0]["dest_path"].endswith("1.mp4")
 
 
+def test_make_video_none_prompt_no_override_becomes_empty(tmp_path):
+    # Section 5 absent (motion_prompt=None) and no override -> passes "" (no crash).
+    maker = FakeMaker(STATUS_DONE)
+    status = make_video(
+        maker=maker, output_dir=tmp_path, ordinal=6, config=CONFIG,
+        motion_prompt=None, duration="10s", quality="720p",
+        image_path=str(tmp_path / "6_9x16.png"), do_video=True)
+    assert status == STATUS_DONE
+    assert maker.calls[0]["motion_prompt"] == ""
+
+
 def test_make_video_uses_config_override_prompt(tmp_path):
     cfg = {"grok": {"motion_prompt_override": "fixed motion"}}
     maker = FakeMaker(STATUS_DONE)
