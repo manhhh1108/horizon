@@ -338,9 +338,11 @@ def test_reads_utf16(tmp_path):
 
 
 def test_reads_cp1258(tmp_path):
+    # cp1258 lacks the combining marks in "Tiếng Việt"; use precomposed letters.
+    text = "Cà phê Đà"
     p = tmp_path / "d.txt"
-    p.write_bytes("Tiếng Việt".encode("cp1258"))
-    assert read_text_file(p) == "Tiếng Việt"
+    p.write_bytes(text.encode("cp1258"))
+    assert read_text_file(p) == text
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -357,15 +359,23 @@ from __future__ import annotations
 
 from pathlib import Path
 
-# Tried in order. utf-8-sig also decodes plain UTF-8; utf-16 catches BOM'd
-# UTF-16; cp1258 is a single-byte last resort that rarely fails.
-_ENCODINGS = ("utf-8-sig", "utf-16", "utf-8", "cp1258")
+# BOM-less fallbacks tried after BOM detection. utf-8 errors on invalid
+# sequences; cp1258 is a single-byte last resort, so it must come last.
+_FALLBACK_ENCODINGS = ("utf-8", "cp1258")
 
 
 def read_text_file(path: Path) -> str:
-    """Read a .txt file, auto-detecting a supported encoding."""
+    """Read a .txt file, auto-detecting a supported encoding.
+
+    A BOM is honoured explicitly (UTF-16 LE/BE, UTF-8-BOM) because UTF-16
+    decoding is greedy and would otherwise mis-decode single-byte content.
+    """
     raw = path.read_bytes()
-    for enc in _ENCODINGS:
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return raw.decode("utf-16")
+    if raw.startswith(b"\xef\xbb\xbf"):
+        return raw.decode("utf-8-sig")
+    for enc in _FALLBACK_ENCODINGS:
         try:
             return raw.decode(enc)
         except (UnicodeDecodeError, UnicodeError):
