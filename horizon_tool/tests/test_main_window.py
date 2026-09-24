@@ -55,3 +55,6 @@ def test_run_completes_and_returns_to_idle(qtbot):
     # robust against the stub finishing before we could pre-connect a signal).
     qtbot.waitUntil(lambda: win.start_btn.isEnabled(), timeout=3000)
     assert win.worker.processed == 3
+    # progress signal populated the table (one row per processed script).
+    assert win.table.rowCount() == 3
+    assert win.table.item(0, 0).text() == "1"

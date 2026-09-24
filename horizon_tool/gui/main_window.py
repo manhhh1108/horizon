@@ -13,7 +13,7 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
     QLineEdit, QPushButton, QComboBox, QCheckBox, QPlainTextEdit,
-    QTableWidget, QTableWidgetItem, QFileDialog, QGroupBox,  # noqa: F401  QTableWidgetItem used from Phase 2
+    QTableWidget, QTableWidgetItem, QFileDialog, QGroupBox,
 )
 
 from horizon_tool.core.config_loader import AppConfig
@@ -157,15 +157,28 @@ class MainWindow(QMainWindow):
         # Phase 1: run the stub worker over a dummy list to prove wiring.
         if self.worker is not None and self.worker.isRunning():
             return  # ignore re-clicks while a run is in progress
+        self.table.setRowCount(0)
         self.worker = PipelineWorker(scripts=[1, 2, 3])
         self.worker.log.connect(self.append_log)
+        self.worker.progress.connect(self._on_progress)
         self.worker.done.connect(self._on_worker_done)
         self._set_running_state(True)
         self.worker.start()
 
+    def _on_progress(self, ordinal: int, status: str) -> None:
+        """Append a progress row (runs on the GUI thread via a queued signal)."""
+        row = self.table.rowCount()
+        self.table.insertRow(row)
+        self.table.setItem(row, 0, QTableWidgetItem(str(ordinal)))
+        self.table.setItem(row, 2, QTableWidgetItem(status))
+
     def _set_paused(self, paused: bool) -> None:
-        if self.worker is not None:
-            self.worker.set_paused(paused)
+        if self.worker is None:
+            return
+        self.worker.set_paused(paused)
+        # Only one of Pause/Resume is actionable at a time.
+        self.pause_btn.setEnabled(not paused)
+        self.resume_btn.setEnabled(paused)
 
     def on_stop(self) -> None:
         if self.worker is not None:
@@ -176,8 +189,19 @@ class MainWindow(QMainWindow):
         self._set_running_state(False)
 
     def _set_running_state(self, running: bool) -> None:
-        """Toggle control buttons so a run cannot be started twice."""
+        """Toggle control buttons so a run cannot be started twice.
+
+        On start, only Pause is actionable (nothing is paused yet); Resume
+        becomes actionable after Pause is pressed (see _set_paused).
+        """
         self.start_btn.setEnabled(not running)
         self.pause_btn.setEnabled(running)
-        self.resume_btn.setEnabled(running)
+        self.resume_btn.setEnabled(False)
         self.stop_btn.setEnabled(running)
+
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt override name
+        """Stop a running worker cleanly before the window closes."""
+        if self.worker is not None and self.worker.isRunning():
+            self.worker.request_stop()
+            self.worker.wait(3000)
+        super().closeEvent(event)

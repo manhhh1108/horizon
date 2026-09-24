@@ -7,26 +7,24 @@ from pathlib import Path
 
 import docx  # python-docx
 
-SUPPORTED_SUFFIXES = {".txt", ".md", ".docx", ".plugin"}
-
-# Filename of a plugin backup directory that should never be listed as a plugin.
-_HISTORY_DIR_NAME = "_history"
+# Readable plugin formats. Encrypted ``.plugin`` files are intentionally NOT
+# discovered yet: their in-memory decryption arrives in Phase 8, and listing
+# them now would let the GUI open a file that read_plugin_text cannot read.
+SUPPORTED_SUFFIXES = {".txt", ".md", ".docx"}
 
 
 def list_plugins(folder: Path) -> list[Path]:
-    """List plugin files directly in a folder (non-recursive).
+    """List readable plugin files directly in a folder (non-recursive).
 
     Only files with a supported suffix are returned; directories (including the
-    ``_history`` backup dir) are excluded. Returns an empty list if the folder
-    does not exist.
+    ``_history`` backup dir) are excluded because they are not files. Returns an
+    empty list if the folder does not exist.
     """
     if not folder.exists():
         return []
     return [
         p for p in folder.iterdir()
-        if p.is_file()
-        and p.suffix.lower() in SUPPORTED_SUFFIXES
-        and p.name != _HISTORY_DIR_NAME
+        if p.is_file() and p.suffix.lower() in SUPPORTED_SUFFIXES
     ]
 
 

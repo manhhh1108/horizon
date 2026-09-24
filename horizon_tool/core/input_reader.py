@@ -46,7 +46,11 @@ def extract_ordinal(filename: str) -> int | None:
 
 
 def read_docx_file(path: Path) -> str:
-    """Read a .docx file into plain text, one paragraph per line."""
+    """Read a .docx file into plain text, one paragraph per line.
+
+    Note: only body paragraphs are read; text inside tables is not included,
+    so scripts authored inside a Word table may be truncated.
+    """
     document = docx.Document(str(path))
     return "\n".join(p.text for p in document.paragraphs)
 
@@ -84,7 +88,9 @@ def scan_input_folder(folder: Path) -> tuple[list[ScriptFile], list[SkippedFile]
 
     Returns valid scripts sorted by ordinal ascending, plus skipped files with
     reasons. Files without an ordinal, empty, or unreadable are skipped, never
-    raised. Files with unsupported extensions are ignored entirely.
+    raised. Files with unsupported extensions are ignored entirely. When two
+    files share the same ordinal, the first (by ordinal then filename) is kept
+    and the rest are skipped, so a slot is never processed twice.
     """
     scripts: list[ScriptFile] = []
     skipped: list[SkippedFile] = []
@@ -106,8 +112,17 @@ def scan_input_folder(folder: Path) -> tuple[list[ScriptFile], list[SkippedFile]
             continue
         scripts.append(ScriptFile(ordinal=ordinal, path=path))
 
-    scripts.sort(key=lambda s: s.ordinal)
-    return scripts, skipped
+    scripts.sort(key=lambda s: (s.ordinal, s.path.name))
+    unique: list[ScriptFile] = []
+    seen: set[int] = set()
+    for script in scripts:
+        if script.ordinal in seen:
+            skipped.append(SkippedFile(
+                script.path, f"Trùng số thứ tự {script.ordinal} với file khác"))
+            continue
+        seen.add(script.ordinal)
+        unique.append(script)
+    return unique, skipped
 
 
 def _parse_selection(selection: str) -> set[int] | None:

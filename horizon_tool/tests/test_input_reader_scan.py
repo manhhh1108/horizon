@@ -20,6 +20,19 @@ def test_scan_sorts_numerically_and_skips_invalid(tmp_path):
     assert "readme.md" not in skipped_names
 
 
+def test_scan_deduplicates_same_ordinal(tmp_path):
+    # Two files resolve to ordinal 5; only the first (by name) is kept.
+    (tmp_path / "ep5.txt").write_text("first", encoding="utf-8")
+    (tmp_path / "scene5.txt").write_text("second", encoding="utf-8")
+
+    scripts, skipped = scan_input_folder(tmp_path)
+
+    assert [s.ordinal for s in scripts] == [5]
+    assert scripts[0].path.name == "ep5.txt"  # sorted by name, first wins
+    dup = [s for s in skipped if s.path.name == "scene5.txt"]
+    assert dup and "Trùng số thứ tự" in dup[0].reason
+
+
 def test_filter_by_selection_range():
     class S:
         def __init__(self, o): self.ordinal = o
