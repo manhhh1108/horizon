@@ -7,7 +7,7 @@ from PySide6.QtCore import QThread, Signal
 
 from horizon_tool.core.input_reader import scan_input_folder, filter_by_selection, read_script_content
 from horizon_tool.core.pipeline import process_script, render_images
-from horizon_tool.core.statuses import STATUS_RUNNING, STATUS_FAILED
+from horizon_tool.core.statuses import STATUS_RUNNING, STATUS_FAILED, STATUS_REJECTED
 
 
 def _close_writer(writer) -> None:
@@ -137,6 +137,11 @@ class ScriptRunWorker(QThread):
                 self.step_status.emit(script.ordinal, "img_16x9", img["img_16x9"])
                 self.log.emit(
                     f"Ảnh kịch bản {script.ordinal}: 9:16={img['img_9x16']}, 16:9={img['img_16x9']}")
+                # Dedicated refusal log (spec §7.4: log the rejection explicitly).
+                for label, status in (("9:16", img["img_9x16"]), ("16:9", img["img_16x9"])):
+                    if status == STATUS_REJECTED:
+                        self.log.emit(
+                            f"Kịch bản {script.ordinal} ảnh {label} bị từ chối (vi phạm chính sách) — bỏ qua, không thử lại.")
             except Exception as exc:  # noqa: BLE001 - one script must not stop the run
                 # The script that produces the image prompts failed, so every
                 # column resolves to a terminal state (no blank cells).
