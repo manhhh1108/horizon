@@ -228,3 +228,37 @@ def test_worker_continues_after_one_script_fails(qtbot, tmp_path):
     assert (1, "img_16x9", STATUS_FAILED) in statuses
     assert (1, "video", STATUS_FAILED) in statuses
     assert worker.wait(2000)
+
+
+def test_video_factory_failure_only_fails_video_column(qtbot, tmp_path):
+    # If the Grok factory raises (e.g. no Grok account), only the video column
+    # is FAILED — the word/image results must not be clobbered.
+    app = QCoreApplication.instance() or QCoreApplication([])
+    (tmp_path / "in").mkdir()
+    (tmp_path / "in" / "1.txt").write_text("k", encoding="utf-8")
+    out = tmp_path / "out"
+    selectors = yaml.safe_load(SELECTORS_PATH.read_text(encoding="utf-8"))
+
+    def boom_factory():
+        raise RuntimeError("Không có tài khoản Grok khả dụng.")
+
+    statuses: list[tuple[int, str, str]] = []
+    worker = ScriptRunWorker(
+        input_dir=str(tmp_path / "in"), output_dir=str(out), selection="",
+        plugin_text="P", heading_regexes=selectors["section_headings"],
+        writer_factory=lambda: FakeWriter(), do_9x16=True, do_16x9=True,
+        do_video=True, video_maker_factory=boom_factory,
+        video_duration="10s", video_quality="720p",
+        config={"chatgpt": {"image_wrapper_9x16": "{PROMPT}",
+                            "image_wrapper_16x9": "{PROMPT}"},
+                "grok": {"motion_prompt_override": ""}})
+    worker.step_status.connect(lambda o, s, st: statuses.append((o, s, st)))
+    with qtbot.waitSignal(worker.done, timeout=5000):
+        worker.start()
+
+    # word + images succeeded (DONE), only video is FAILED (contained).
+    assert (1, "word", STATUS_DONE) in statuses
+    assert (1, "img_9x16", STATUS_DONE) in statuses
+    assert (1, "video", STATUS_FAILED) in statuses
+    assert (1, "word", STATUS_FAILED) not in statuses   # not clobbered
+    assert worker.wait(2000)

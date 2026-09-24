@@ -162,6 +162,7 @@ class ScriptRunWorker(QThread):
                     self.step_status.emit(script.ordinal, "video", STATUS_SKIPPED)
                 else:
                     maker = None
+                    v_status = STATUS_FAILED
                     try:
                         maker = self._video_maker_factory()
                         v_status = make_video(
@@ -170,6 +171,10 @@ class ScriptRunWorker(QThread):
                             duration=self._video_duration, quality=self._video_quality,
                             image_path=img_9x16_path, do_video=True,
                         )
+                    except Exception as exc:  # noqa: BLE001 - contain video errors
+                        # A video failure (e.g. no Grok account) must NOT clobber
+                        # the word/image results — keep it in the video column.
+                        self.log.emit(f"Lỗi video kịch bản {script.ordinal}: {exc}")
                     finally:
                         if maker is not None:
                             _close_writer(maker)  # closes maker.session too
@@ -177,7 +182,7 @@ class ScriptRunWorker(QThread):
                     if v_status == STATUS_REJECTED:
                         self.log.emit(
                             f"Kịch bản {script.ordinal} video bị từ chối — bỏ qua, không thử lại.")
-                    else:
+                    elif v_status != STATUS_FAILED:
                         self.log.emit(f"Video kịch bản {script.ordinal}: {v_status}")
             except Exception as exc:  # noqa: BLE001 - one script must not stop the run
                 # The script that produces the image prompts failed, so every
