@@ -5,7 +5,9 @@ import re
 from pathlib import Path
 
 from docx import Document
+from docx.document import Document as DocumentType
 from docx.shared import Pt
+from docx.text.paragraph import Paragraph
 
 from horizon_tool.core.section_parser import SECTION_ORDER, ParsedSections
 
@@ -25,8 +27,12 @@ SECTION_TITLES = {
 _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 
 
-def _add_markdown_runs(paragraph, text: str) -> None:
-    """Add text to a paragraph, turning **bold** into real bold runs."""
+def _add_markdown_runs(paragraph: Paragraph, text: str) -> None:
+    """Add text to a paragraph, turning **bold** into real bold runs.
+
+    `text` is passed un-stripped so intentional indentation is preserved; only
+    the CHAPTER check (in _render_story) works on a stripped copy.
+    """
     pos = 0
     for m in _BOLD_RE.finditer(text):
         if m.start() > pos:
@@ -38,7 +44,9 @@ def _add_markdown_runs(paragraph, text: str) -> None:
         paragraph.add_run(text[pos:])
 
 
-def _render_story(doc, body: str) -> None:
+def _render_story(doc: DocumentType, body: str) -> None:
+    # Blank source lines are dropped; paragraph separation comes from the
+    # Normal style's space-after (set in build_document), not empty paragraphs.
     for line in body.split("\n"):
         stripped = line.strip()
         if not stripped:
@@ -49,16 +57,20 @@ def _render_story(doc, body: str) -> None:
             _add_markdown_runs(doc.add_paragraph(), line)
 
 
-def _render_monospace(doc, body: str) -> None:
+def _render_monospace(doc: DocumentType, body: str) -> None:
+    # The video prompt's exact line layout (shots, timings) is meaningful, so
+    # every line — including blanks that separate shots — is preserved. Spacing
+    # is tightened to 0 so the block reads as a code block, not double-spaced.
     for line in body.split("\n"):
         paragraph = doc.add_paragraph()
         paragraph.paragraph_format.left_indent = Pt(18)
+        paragraph.paragraph_format.space_after = Pt(0)
         run = paragraph.add_run(line)
         run.font.name = "Consolas"
         run.font.size = Pt(10)
 
 
-def _render_generic(doc, body: str) -> None:
+def _render_generic(doc: DocumentType, body: str) -> None:
     for line in body.split("\n"):
         if line.strip():
             _add_markdown_runs(doc.add_paragraph(), line)
@@ -76,6 +88,8 @@ def build_document(parsed: ParsedSections, path: Path) -> None:
     normal = doc.styles["Normal"]
     normal.font.name = "Calibri"
     normal.font.size = Pt(11)
+    # Visual separation between paragraphs without inserting empty paragraphs.
+    normal.paragraph_format.space_after = Pt(6)
 
     for key in SECTION_ORDER:
         if key not in parsed.sections:

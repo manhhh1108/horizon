@@ -57,6 +57,16 @@ def test_video_prompt_is_monospace(tmp_path):
     assert runs and runs[0].font.name == "Consolas"
 
 
+def test_multiple_bold_spans_on_one_line(tmp_path):
+    out = tmp_path / "5.docx"
+    parsed = ParsedSections(sections={
+        "full_story": "He said **first** then **second** words."}, missing=[])
+    build_document(parsed, out)
+    doc = _read(out)
+    bold_texts = [r.text for p in doc.paragraphs for r in p.runs if r.bold]
+    assert "first" in bold_texts and "second" in bold_texts
+
+
 def test_missing_sections_still_builds(tmp_path):
     out = tmp_path / "4.docx"
     parsed = ParsedSections(sections={"full_story": "Just a story."}, missing=[

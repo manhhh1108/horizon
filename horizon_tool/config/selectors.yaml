@@ -38,12 +38,16 @@ patterns:
 # Section heading regexes (matched on a stripped line, IGNORECASE).
 # Order = canonical section order (1..9).
 section_headings:
-  full_story: "^#*\\s*\\**\\s*(\\d+[\\.\\)]\\s*)?FULL STORY"
-  key_scenes: "^#*\\s*\\**\\s*(\\d+[\\.\\)]\\s*)?KEY SCENES"
-  image_9x16: "^#*\\s*\\**\\s*(\\d+[\\.\\)]\\s*)?IMAGE PROMPT"
-  thumbnail_16x9: "^#*\\s*\\**\\s*(\\d+[\\.\\)]\\s*)?THUMBNAIL"
-  video_prompt: "^#*\\s*\\**\\s*(\\d+[\\.\\)]\\s*)?VIDEO AI PROMPT"
-  fb_title: "^#*\\s*\\**\\s*(\\d+[\\.\\)]\\s*)?FACEBOOK TITLE"
-  fb_description: "^#*\\s*\\**\\s*(\\d+[\\.\\)]\\s*)?FACEBOOK VIDEO DESCRIPTION"
-  story_teaser: "^#*\\s*\\**\\s*(\\d+[\\.\\)]\\s*)?STORY TEASER"
-  hashtags: "^#*\\s*\\**\\s*(\\d+[\\.\\)]\\s*)?HASHTAGS"
+  # The (?-i:[^a-z]*)$ tail requires the rest of the line after the heading
+  # keyword to contain no lowercase letters, so a story sentence that merely
+  # starts with e.g. "IMAGE PROMPT was ..." is not mistaken for a heading,
+  # while real headings ("IMAGE PROMPT — 9:16", "KEY SCENES + NOTE") still match.
+  full_story: "^#*\\s*\\**\\s*(\\d+[\\.\\)]\\s*)?FULL STORY(?-i:[^a-z]*)$"
+  key_scenes: "^#*\\s*\\**\\s*(\\d+[\\.\\)]\\s*)?KEY SCENES(?-i:[^a-z]*)$"
+  image_9x16: "^#*\\s*\\**\\s*(\\d+[\\.\\)]\\s*)?IMAGE PROMPT(?-i:[^a-z]*)$"
+  thumbnail_16x9: "^#*\\s*\\**\\s*(\\d+[\\.\\)]\\s*)?THUMBNAIL(?-i:[^a-z]*)$"
+  video_prompt: "^#*\\s*\\**\\s*(\\d+[\\.\\)]\\s*)?VIDEO AI PROMPT(?-i:[^a-z]*)$"
+  fb_title: "^#*\\s*\\**\\s*(\\d+[\\.\\)]\\s*)?FACEBOOK TITLE(?-i:[^a-z]*)$"
+  fb_description: "^#*\\s*\\**\\s*(\\d+[\\.\\)]\\s*)?FACEBOOK VIDEO DESCRIPTION(?-i:[^a-z]*)$"
+  story_teaser: "^#*\\s*\\**\\s*(\\d+[\\.\\)]\\s*)?STORY TEASER(?-i:[^a-z]*)$"
+  hashtags: "^#*\\s*\\**\\s*(\\d+[\\.\\)]\\s*)?HASHTAGS(?-i:[^a-z]*)$"

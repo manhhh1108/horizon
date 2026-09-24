@@ -70,6 +70,21 @@ def test_missing_sections_reported():
     assert len(parsed.missing) == 7
 
 
+def test_story_line_starting_with_keyword_is_not_a_heading():
+    # A story sentence that merely starts with "IMAGE PROMPT"/"HASHTAGS" must
+    # not be mistaken for a section heading and split the story.
+    text = (
+        "FULL STORY\n\n"
+        "IMAGE PROMPT was the phrase he could not forget that night.\n"
+        "hashtags of grief followed him everywhere.\n\n"
+        "HASHTAGS\n\n#a #b"
+    )
+    parsed = parse_sections(text, HEADINGS)
+    assert "IMAGE PROMPT was the phrase" in parsed.sections["full_story"]
+    assert "image_9x16" in parsed.missing         # the story line did NOT match
+    assert parsed.sections["hashtags"].startswith("#a")  # the real heading did
+
+
 def test_strip_continue_markers():
     text = 'Chapter text.\n[PART 1 COMPLETE — TYPE "CONTINUE" FOR THE NEXT PART]\nMore.'
     out = strip_continue_markers(text, CONTINUE)
