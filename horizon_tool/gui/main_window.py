@@ -16,11 +16,15 @@ from PySide6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QFileDialog, QGroupBox,
 )
 
+from horizon_tool.core.account_manager import AccountManager
 from horizon_tool.core.config_loader import AppConfig
 from horizon_tool.core.plugin_manager import list_plugins
+from horizon_tool.gui.accounts_window import AccountsWindow
 from horizon_tool.gui.worker import PipelineWorker
 
 PLUGINS_DIR = Path(__file__).resolve().parents[1] / "plugins"
+STATE_DIR = Path(__file__).resolve().parents[1] / "state"
+PROFILES_DIR = Path(__file__).resolve().parents[1] / "profiles"
 STEP_COLUMNS = ["STT", "Tên file", "Kịch bản", "Ảnh 9:16", "Ảnh 16:9", "Video"]
 
 
@@ -31,6 +35,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.config = config
         self.worker: PipelineWorker | None = None
+        self.account_manager = AccountManager(
+            STATE_DIR / "accounts.json", PROFILES_DIR)
+        self.accounts_window: AccountsWindow | None = None
         self.setWindowTitle("Horizon X Media Tool")
         self.resize(1100, 720)
 
@@ -113,6 +120,7 @@ class MainWindow(QMainWindow):
         self.pause_btn.clicked.connect(lambda: self._set_paused(True))
         self.resume_btn.clicked.connect(lambda: self._set_paused(False))
         self.stop_btn.clicked.connect(self.on_stop)
+        self.accounts_btn.clicked.connect(self.open_accounts_window)
         for b in (self.start_btn, self.pause_btn, self.resume_btn, self.stop_btn,
                   self.accounts_btn, self.settings_btn):
             layout.addWidget(b)
@@ -198,6 +206,13 @@ class MainWindow(QMainWindow):
         self.pause_btn.setEnabled(running)
         self.resume_btn.setEnabled(False)
         self.stop_btn.setEnabled(running)
+
+    def open_accounts_window(self) -> None:
+        """Open (or re-show) the accounts management window."""
+        if self.accounts_window is None:
+            self.accounts_window = AccountsWindow(self.account_manager, self)
+        self.accounts_window.show()
+        self.accounts_window.raise_()
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt override name
         """Stop a running worker cleanly before the window closes."""

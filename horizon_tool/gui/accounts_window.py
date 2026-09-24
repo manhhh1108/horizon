@@ -6,18 +6,26 @@ through AccountManager, which persists immediately.
 """
 from __future__ import annotations
 
+from functools import partial
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGroupBox, QTableWidget,
     QTableWidgetItem, QPushButton, QInputDialog, QMessageBox, QWidget,
 )
 
+from horizon_tool.automation.browser import BrowserSession
 from horizon_tool.core.account_manager import (
     Account, AccountManager, SERVICE_CHATGPT, SERVICE_GROK,
 )
+from horizon_tool.gui.login_worker import LoginWorker
 
 _SERVICE_TITLES = {SERVICE_CHATGPT: "ChatGPT", SERVICE_GROK: "Grok"}
 _COLUMNS = ["Tên hiển thị", "Trạng thái", "Bật"]
+_LOGIN_URLS = {
+    SERVICE_CHATGPT: "https://chatgpt.com/",
+    SERVICE_GROK: "https://grok.com/",
+}
 
 
 class AccountsWindow(QDialog):
@@ -127,10 +135,36 @@ class AccountsWindow(QDialog):
         self.set_enabled(account_id, not current)
 
     def _on_login(self, service: str) -> None:
-        # Manual login is wired to a real browser in Task 6 (needs the app's
-        # config + a worker thread). Here we surface a clear placeholder so the
-        # button is never silently dead.
-        QMessageBox.information(
+        account_id = self._selected_account_id(service)
+        if account_id is None:
+            QMessageBox.information(
+                self, "Đăng nhập", "Hãy chọn một tài khoản trước.")
+            return
+        account = self.manager.get(account_id)
+        url = _LOGIN_URLS[service]
+
+        def factory():
+            # Headful so the user can log in; profile persists the session.
+            return BrowserSession(account.profile_dir, headless=False)
+
+        self._login_worker = LoginWorker(url, factory, parent=self)
+        self._login_worker.opened.connect(
+            partial(self._prompt_login_done, service))
+        self._login_worker.finished_result.connect(
+            partial(self._on_login_finished, service))
+        self._login_worker.start()
+
+    def _prompt_login_done(self, service: str) -> None:
+        done = QMessageBox.question(
             self, "Đăng nhập",
-            "Chức năng đăng nhập thủ công sẽ mở trình duyệt (được nối ở bước sau).",
+            "Trình duyệt đã mở. Đăng nhập xong rồi bấm Yes để xác nhận.",
         )
+        if done == QMessageBox.StandardButton.Yes:
+            self._login_worker.confirm()
+        else:
+            self._login_worker.cancel()
+
+    def _on_login_finished(self, service: str, ok: bool) -> None:
+        if ok:
+            QMessageBox.information(self, "Đăng nhập", "Đã lưu phiên đăng nhập.")
+        self._refresh(service)
