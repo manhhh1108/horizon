@@ -6,7 +6,8 @@ from pathlib import Path
 from PySide6.QtCore import QThread, Signal
 
 from horizon_tool.core.input_reader import scan_input_folder, filter_by_selection, read_script_content
-from horizon_tool.core.pipeline import process_script, STATUS_FAILED
+from horizon_tool.core.pipeline import process_script, render_images
+from horizon_tool.core.statuses import STATUS_RUNNING, STATUS_FAILED
 
 
 def _close_writer(writer) -> None:
@@ -58,20 +59,21 @@ class PipelineWorker(QThread):
 
 
 class ScriptRunWorker(QThread):
-    """Runs the Phase-3 script->Word pipeline over an input folder.
+    """Runs the Phase-3 script->Word pipeline over an input folder, then renders images.
 
-    `writer_factory(account) -> ScriptWriter` builds the ChatGPT writer; it is
+    `writer_factory() -> ScriptWriter` builds the ChatGPT writer; it is
     injected so the worker can be exercised without a real browser. Cooperative
     pause/stop at script boundaries.
     """
 
     log = Signal(str)
-    progress = Signal(int, str)      # (ordinal, status)
+    step_status = Signal(int, str, str)   # (ordinal, step_key, status)
     done = Signal()
 
     def __init__(self, *, input_dir: str, output_dir: str, selection: str,
                  plugin_text: str, heading_regexes: dict, writer_factory,
-                 parent=None) -> None:
+                 do_9x16: bool = True, do_16x9: bool = True,
+                 config: dict | None = None, parent=None) -> None:
         super().__init__(parent)
         self._input_dir = Path(input_dir)
         self._output_dir = Path(output_dir)
@@ -79,6 +81,9 @@ class ScriptRunWorker(QThread):
         self._plugin_text = plugin_text
         self._heading_regexes = heading_regexes
         self._writer_factory = writer_factory
+        self._do_9x16 = do_9x16
+        self._do_16x9 = do_16x9
+        self._config = config or {}
         self._stop = False
         self._paused = False
 
@@ -97,12 +102,12 @@ class ScriptRunWorker(QThread):
             if self._stop:
                 self.log.emit("Đã dừng theo yêu cầu.")
                 break
-            while self._paused and not self._stop:  # cooperative pause at boundary
+            while self._paused and not self._stop:
                 self.msleep(100)
             if self._stop:
                 self.log.emit("Đã dừng theo yêu cầu.")
                 break
-            self.progress.emit(script.ordinal, "Đang chạy")
+            self.step_status.emit(script.ordinal, "word", STATUS_RUNNING)
             writer = None
             try:
                 out_dir = self._output_dir / str(script.ordinal)
@@ -117,15 +122,26 @@ class ScriptRunWorker(QThread):
                 if outcome.missing_sections:
                     self.log.emit(
                         f"Kịch bản {script.ordinal}: thiếu {len(outcome.missing_sections)} section")
-                self.progress.emit(script.ordinal, outcome.word_status)
-                self.log.emit(f"Xong kịch bản {script.ordinal} -> {out_dir / str(script.ordinal)}.docx")
-                # TODO (Phase 6): add a ReportWriter row here (ordinal, plugin+hash,
-                # account, word/img/video status, missing sections, duration).
+                self.step_status.emit(script.ordinal, "word", outcome.word_status)
+                self.log.emit(f"Xong Word kịch bản {script.ordinal}")
+                # TODO (Phase 6): add a ReportWriter row for this script.
+
+                img = render_images(
+                    writer=writer, output_dir=out_dir, ordinal=script.ordinal,
+                    config=self._config,
+                    image_9x16_prompt=outcome.image_9x16_prompt,
+                    thumbnail_16x9_prompt=outcome.thumbnail_16x9_prompt,
+                    do_9x16=self._do_9x16, do_16x9=self._do_16x9,
+                )
+                self.step_status.emit(script.ordinal, "img_9x16", img["img_9x16"])
+                self.step_status.emit(script.ordinal, "img_16x9", img["img_16x9"])
+                self.log.emit(
+                    f"Ảnh kịch bản {script.ordinal}: 9:16={img['img_9x16']}, 16:9={img['img_16x9']}")
             except Exception as exc:  # noqa: BLE001 - one script must not stop the run
-                self.progress.emit(script.ordinal, STATUS_FAILED)
+                self.step_status.emit(script.ordinal, "word", STATUS_FAILED)
                 self.log.emit(f"Lỗi kịch bản {script.ordinal}: {exc}")
                 # TODO (Phase 6): add a ReportWriter row with error=str(exc).
             finally:
                 if writer is not None:
-                    _close_writer(writer)  # never leak a browser between scripts
+                    _close_writer(writer)
         self.done.emit()
