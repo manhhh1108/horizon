@@ -1,0 +1,32 @@
+# General runtime configuration. Values here drive GUI dropdowns and timing so
+# the tool adapts to ChatGPT/Grok UI changes without touching code.
+
+grok:
+  durations: ["10s", "15s", "20s"]      # GUI "Thời lượng" dropdown
+  qualities: ["720p", "1080p"]          # GUI "Chất lượng" dropdown
+  render_timeout_seconds: 600           # wait up to 10 min for a Grok video
+  motion_prompt_override: ""            # if set, used instead of section 5
+
+chatgpt:
+  send_mode: "two_messages"             # "combined" or "two_messages"
+  runtime_suffix: ""                    # optional text appended after the script
+  image_wrapper_9x16: "Generate an image in 9:16 vertical ratio based on this prompt:\n\n{PROMPT}"
+  image_wrapper_16x9: "Generate an image in 16:9 horizontal ratio based on this prompt:\n\n{PROMPT}"
+
+timeouts:
+  element_wait_seconds: 30
+  response_wait_seconds: 600
+
+retry:
+  max_attempts: 3
+  backoff_base_seconds: 5               # backoff = base * 2**attempt
+
+delays:
+  between_steps_min_seconds: 2
+  between_steps_max_seconds: 6
+  between_scripts_min_seconds: 5
+  between_scripts_max_seconds: 15
+
+auto_resume:
+  enabled: false
+  check_interval_minutes: 30

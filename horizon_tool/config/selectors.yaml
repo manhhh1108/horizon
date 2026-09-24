@@ -1,0 +1,49 @@
+# CSS/XPath selectors and recognition regexes for ChatGPT and Grok.
+# The UIs change often; edit this file (no code change needed) when they do.
+# Selectors marked TODO must be verified against the real logged-in DOM.
+
+chatgpt:
+  url_new_chat: "https://chatgpt.com/"
+  input_box: "div#prompt-textarea"          # TODO: kiểm tra selector thực tế
+  send_button: "button[data-testid='send-button']"  # TODO: kiểm tra selector thực tế
+  stop_button: "button[data-testid='stop-button']"  # TODO: kiểm tra selector thực tế
+  assistant_message: "div[data-message-author-role='assistant']"  # TODO: kiểm tra selector thực tế
+  file_download_link: "a[href*='sandbox']"  # TODO: kiểm tra selector thực tế
+  generated_image: "img[alt*='Generated']"  # TODO: kiểm tra selector thực tế
+
+grok:
+  url_image_to_video: "https://grok.com/"   # TODO: kiểm tra selector thực tế
+  image_upload_input: "input[type='file']"  # TODO: kiểm tra selector thực tế
+  motion_prompt_box: "textarea"             # TODO: kiểm tra selector thực tế
+  duration_control: ""                      # TODO: kiểm tra selector thực tế
+  quality_control: ""                       # TODO: kiểm tra selector thực tế
+  generate_button: ""                       # TODO: kiểm tra selector thực tế
+  video_result: "video"                     # TODO: kiểm tra selector thực tế
+
+# Recognition patterns (Python regex, case-insensitive at use site).
+patterns:
+  continue_marker: "\\[PART\\s+\\d+\\s+COMPLETE.*?CONTINUE.*?\\]"
+  quota_exhausted:
+    - "you've reached your.*limit"
+    - "quota"
+    - "try again later"
+  policy_refusal:
+    - "I can't help with that"
+    - "against.*content policy"
+    - "unable to generate this image"
+  session_expired:
+    - "log in"
+    - "session expired"
+
+# Section heading regexes (matched on a stripped line, IGNORECASE).
+# Order = canonical section order (1..9).
+section_headings:
+  full_story: "^#*\\s*\\**\\s*(\\d+[\\.\\)]\\s*)?FULL STORY"
+  key_scenes: "^#*\\s*\\**\\s*(\\d+[\\.\\)]\\s*)?KEY SCENES"
+  image_9x16: "^#*\\s*\\**\\s*(\\d+[\\.\\)]\\s*)?IMAGE PROMPT"
+  thumbnail_16x9: "^#*\\s*\\**\\s*(\\d+[\\.\\)]\\s*)?THUMBNAIL"
+  video_prompt: "^#*\\s*\\**\\s*(\\d+[\\.\\)]\\s*)?VIDEO AI PROMPT"
+  fb_title: "^#*\\s*\\**\\s*(\\d+[\\.\\)]\\s*)?FACEBOOK TITLE"
+  fb_description: "^#*\\s*\\**\\s*(\\d+[\\.\\)]\\s*)?FACEBOOK VIDEO DESCRIPTION"
+  story_teaser: "^#*\\s*\\**\\s*(\\d+[\\.\\)]\\s*)?STORY TEASER"
+  hashtags: "^#*\\s*\\**\\s*(\\d+[\\.\\)]\\s*)?HASHTAGS"
