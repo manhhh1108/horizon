@@ -4,6 +4,9 @@ pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication  # noqa: E402
 from horizon_tool.core.config_loader import AppConfig  # noqa: E402
 from horizon_tool.gui.main_window import MainWindow  # noqa: E402
+from horizon_tool.core.statuses import (  # noqa: E402
+    STATUS_RUNNING, STATUS_DONE, STATUS_REJECTED,
+)
 from pathlib import Path  # noqa: E402
 
 CONFIG = Path(__file__).resolve().parents[1] / "config" / "config.yaml"
@@ -65,15 +68,15 @@ def test_start_without_inputs_shows_message(qtbot):
     assert win.worker is None
 
 
-def test_progress_upserts_one_row_per_script(qtbot):
+def test_step_status_upserts_and_maps_columns(qtbot):
     app = QApplication.instance() or QApplication([])
     win = MainWindow(AppConfig.load(CONFIG))
     qtbot.addWidget(win)
-    # Same ordinal reported twice (running -> done) must update, not duplicate.
-    win._on_progress(1, "Đang chạy")
-    win._on_progress(1, "Xong")
-    win._on_progress(2, "Đang chạy")
+    win._on_step_status(1, "word", STATUS_RUNNING)
+    win._on_step_status(1, "word", STATUS_DONE)          # updates in place
+    win._on_step_status(1, "img_9x16", STATUS_REJECTED)
+    win._on_step_status(2, "word", STATUS_RUNNING)
     assert win.table.rowCount() == 2
-    assert win.table.item(0, 0).text() == "1"
-    assert win.table.item(0, 2).text() == "Xong"   # updated in place
-    assert win.table.item(1, 2).text() == "Đang chạy"
+    assert win.table.item(0, 2).text() == STATUS_DONE       # word col
+    assert win.table.item(0, 3).text() == STATUS_REJECTED   # 9:16 col
+    assert win.table.item(1, 2).text() == STATUS_RUNNING

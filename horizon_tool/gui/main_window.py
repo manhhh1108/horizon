@@ -29,6 +29,7 @@ STATE_DIR = Path(__file__).resolve().parents[1] / "state"
 PROFILES_DIR = Path(__file__).resolve().parents[1] / "profiles"
 SELECTORS_PATH = Path(__file__).resolve().parents[1] / "config" / "selectors.yaml"
 STEP_COLUMNS = ["STT", "Tên file", "Kịch bản", "Ảnh 9:16", "Ảnh 16:9", "Video"]
+STEP_COLUMN_INDEX = {"word": 2, "img_9x16": 3, "img_16x9": 4, "video": 5}
 
 
 class MainWindow(QMainWindow):
@@ -195,27 +196,32 @@ class MainWindow(QMainWindow):
             input_dir=input_dir, output_dir=output_dir,
             selection=self.range_edit.text().strip(), plugin_text=plugin_text,
             heading_regexes=selectors["section_headings"],
-            writer_factory=writer_factory, parent=self,
+            writer_factory=writer_factory,
+            do_9x16=self.step_img_9x16.isChecked(),
+            do_16x9=self.step_thumb_16x9.isChecked(),
+            config=self.config.raw, parent=self,
         )
         self.worker.log.connect(self.append_log)
-        self.worker.progress.connect(self._on_progress)
+        self.worker.step_status.connect(self._on_step_status)
         self.worker.done.connect(self._on_worker_done)
         self._set_running_state(True)
         self.worker.start()
 
-    def _on_progress(self, ordinal: int, status: str) -> None:
-        """Upsert the row for `ordinal`, setting the script-step status.
+    def _on_step_status(self, ordinal: int, step: str, status: str) -> None:
+        """Upsert the row for `ordinal` and set the given step's column.
 
-        Runs on the GUI thread (queued signal). One row per script: the same
-        ordinal receiving 'Đang chạy' then 'Xong' updates the row in place
-        instead of inserting a duplicate. Column 2 is the "Kịch bản" step.
+        Runs on the GUI thread (queued signal). One row per script.
         """
         row = self._row_for_ordinal(ordinal)
         if row is None:
             row = self.table.rowCount()
             self.table.insertRow(row)
             self.table.setItem(row, 0, QTableWidgetItem(str(ordinal)))
-        self.table.setItem(row, 2, QTableWidgetItem(status))
+        self.table.setItem(row, STEP_COLUMN_INDEX[step], QTableWidgetItem(status))
+
+    def _on_progress(self, ordinal: int, status: str) -> None:
+        """Compat shim for PipelineWorker (Phase-1 stub): the word step."""
+        self._on_step_status(ordinal, "word", status)
 
     def _row_for_ordinal(self, ordinal: int) -> int | None:
         """Return the existing table row for a script ordinal, or None."""

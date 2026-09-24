@@ -6,7 +6,8 @@ from pathlib import Path
 pytest.importorskip("PySide6")
 from PySide6.QtCore import QCoreApplication  # noqa: E402
 from horizon_tool.gui.worker import ScriptRunWorker  # noqa: E402
-from horizon_tool.automation.chatgpt import ScriptResult  # noqa: E402
+from horizon_tool.automation.chatgpt import ScriptResult, ImageRenderResult  # noqa: E402
+from horizon_tool.core.statuses import STATUS_DONE, STATUS_FAILED  # noqa: E402
 
 FULL = """FULL STORY
 
@@ -67,6 +68,11 @@ class FakeWriter:
     def write_script(self, plugin_text, script_text, runtime_suffix=""):
         return ScriptResult(raw_text=FULL)
 
+    def render_image(self, prompt, wrapper, dest_path):
+        # simulate a saved file
+        Path(dest_path).write_bytes(b"PNG")
+        return ImageRenderResult(status=STATUS_DONE, path=dest_path)
+
 
 def test_worker_processes_folder(qtbot, tmp_path):
     app = QCoreApplication.instance() or QCoreApplication([])
@@ -82,16 +88,24 @@ def test_worker_processes_folder(qtbot, tmp_path):
         created.append(w)
         return w
 
+    statuses = []
     worker = ScriptRunWorker(
         input_dir=str(tmp_path / "in"), output_dir=str(out), selection="",
         plugin_text="PLUGIN", heading_regexes=selectors["section_headings"],
-        writer_factory=factory,
+        writer_factory=factory, do_9x16=True, do_16x9=True,
+        config={"chatgpt": {"image_wrapper_9x16": "{PROMPT}",
+                            "image_wrapper_16x9": "{PROMPT}"}},
     )
+    worker.step_status.connect(lambda o, s, st: statuses.append((o, s, st)))
     with qtbot.waitSignal(worker.done, timeout=5000):
         worker.start()
 
     assert (out / "1" / "1.docx").exists()
     assert (out / "2" / "2.docx").exists()
+    assert (out / "1" / "1_9x16.png").exists()
+    assert (out / "1" / "1_16x9.png").exists()
+    assert any(s == "img_9x16" for _, s, _ in statuses)
+    assert any(s == "img_16x9" for _, s, _ in statuses)
     # Each script's browser session is closed after use (no Chromium leak).
     assert len(created) == 2
     assert all(w.session.closed for w in created)
@@ -117,20 +131,29 @@ def test_worker_continues_after_one_script_fails(qtbot, tmp_path):
                 raise RuntimeError("giả lập lỗi ChatGPT")
             return ScriptResult(raw_text=FULL)
 
+        def render_image(self, prompt, wrapper, dest_path):
+            Path(dest_path).write_bytes(b"PNG")
+            return ImageRenderResult(status=STATUS_DONE, path=dest_path)
+
     holder = [0]
-    statuses: list[tuple[int, str]] = []
+    statuses: list[tuple[int, str, str]] = []
 
     worker = ScriptRunWorker(
         input_dir=str(tmp_path / "in"), output_dir=str(out), selection="",
         plugin_text="P", heading_regexes=selectors["section_headings"],
         writer_factory=lambda: FlakyWriter(holder),
+        do_9x16=True, do_16x9=True,
+        config={"chatgpt": {"image_wrapper_9x16": "{PROMPT}",
+                            "image_wrapper_16x9": "{PROMPT}"}},
     )
-    worker.progress.connect(lambda o, s: statuses.append((o, s)))
+    worker.step_status.connect(lambda o, s, st: statuses.append((o, s, st)))
     with qtbot.waitSignal(worker.done, timeout=5000):
         worker.start()
 
     # First script failed but the second still produced its Word file.
     assert (out / "2" / "2.docx").exists()
-    assert ("Lỗi" in [s for _, s in statuses]) or any(
-        s == "Lỗi" for _, s in statuses)
+    assert (1, "word", STATUS_FAILED) in statuses
+    # A failed script resolves ALL its columns (no blank image cells).
+    assert (1, "img_9x16", STATUS_FAILED) in statuses
+    assert (1, "img_16x9", STATUS_FAILED) in statuses
     assert worker.wait(2000)
