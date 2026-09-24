@@ -111,7 +111,12 @@ def scan_input_folder(folder: Path) -> tuple[list[ScriptFile], list[SkippedFile]
 
 
 def _parse_selection(selection: str) -> set[int] | None:
-    """Parse '5-20' / '3,7,9' / '1-3,7' into a set; '' -> None (all)."""
+    """Parse '5-20' / '3,7,9' / '1-3,7' into a set; '' -> None (all).
+
+    Reversed ranges like '20-5' are normalised to 5..20. Empty parts from
+    consecutive commas are ignored. Raises ValueError with a Vietnamese
+    message on malformed input (e.g. '5-', 'abc') so the GUI can show it.
+    """
     selection = selection.strip()
     if not selection:
         return None
@@ -120,12 +125,15 @@ def _parse_selection(selection: str) -> set[int] | None:
         part = part.strip()
         if not part:
             continue
-        if "-" in part:
-            lo_s, hi_s = part.split("-", 1)
-            lo, hi = int(lo_s), int(hi_s)
-            wanted.update(range(min(lo, hi), max(lo, hi) + 1))
-        else:
-            wanted.add(int(part))
+        try:
+            if "-" in part:
+                lo_s, hi_s = part.split("-", 1)
+                lo, hi = int(lo_s), int(hi_s)
+                wanted.update(range(min(lo, hi), max(lo, hi) + 1))
+            else:
+                wanted.add(int(part))
+        except ValueError:
+            raise ValueError(f"Phạm vi không hợp lệ: {part!r}") from None
     return wanted
 
 
