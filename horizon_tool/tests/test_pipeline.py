@@ -1,9 +1,15 @@
 # horizon_tool/tests/test_pipeline.py
+from pathlib import Path
+
 import docx
+import yaml
 
 from horizon_tool.core.pipeline import process_script
 from horizon_tool.core.section_parser import ParsedSections
 from horizon_tool.automation.chatgpt import ScriptResult
+
+# Resolve selectors relative to the package, not the pytest CWD.
+SELECTORS_PATH = Path(__file__).resolve().parents[1] / "config" / "selectors.yaml"
 
 FULL = """FULL STORY
 
@@ -51,10 +57,7 @@ class FakeWriter:
 
 
 def test_process_script_builds_word_and_raw(tmp_path):
-    import yaml
-    from pathlib import Path
-    selectors = yaml.safe_load(
-        (Path("horizon_tool/config/selectors.yaml")).read_text(encoding="utf-8"))
+    selectors = yaml.safe_load(SELECTORS_PATH.read_text(encoding="utf-8"))
     out_dir = tmp_path / "output" / "3"
     out_dir.mkdir(parents=True)
 
@@ -78,10 +81,7 @@ def test_process_script_reports_missing_sections(tmp_path):
     class PartialWriter:
         def write_script(self, plugin_text, script_text, runtime_suffix=""):
             return ScriptResult(raw_text="FULL STORY\n\nOnly a story.\n\nHASHTAGS\n\n#a")
-    import yaml
-    from pathlib import Path
-    selectors = yaml.safe_load(
-        (Path("horizon_tool/config/selectors.yaml")).read_text(encoding="utf-8"))
+    selectors = yaml.safe_load(SELECTORS_PATH.read_text(encoding="utf-8"))
     out_dir = tmp_path / "5"
     out_dir.mkdir(parents=True)
     result = process_script(

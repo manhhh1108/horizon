@@ -14,7 +14,11 @@ STATUS_FAILED = "Lỗi"
 
 
 class ScriptWriter(Protocol):
-    """Anything that can turn a plugin + script into a ScriptResult."""
+    """Anything that can turn a plugin + script into a ScriptResult.
+
+    (The writer returns a ScriptResult; process_script wraps that into a
+    ScriptOutcome for the caller.)
+    """
 
     def write_script(self, plugin_text: str, script_text: str,
                      runtime_suffix: str = ""): ...
@@ -22,13 +26,17 @@ class ScriptWriter(Protocol):
 
 @dataclass
 class ScriptOutcome:
-    """Result of processing one script through the Phase-3 steps."""
+    """Result of processing one script through the Phase-3 steps.
+
+    process_script only returns this on success (word_status == STATUS_DONE);
+    failures propagate as exceptions the worker catches, so word_status has no
+    failure default here.
+    """
 
     ordinal: int
-    word_status: str = STATUS_FAILED
+    word_status: str = STATUS_DONE
     missing_sections: list[str] = field(default_factory=list)
     conversation_url: str | None = None
-    error: str = ""
 
 
 def process_script(*, writer: ScriptWriter, ordinal: int, output_dir: Path,

@@ -16,3 +16,4 @@ def test_worker_emits_log_and_finished(qtbot):
 
     assert any("Giai đoạn 1" in m for m in logs)
     assert worker.processed == 3
+    assert worker.wait(2000)  # join the OS thread so it isn't destroyed while running
