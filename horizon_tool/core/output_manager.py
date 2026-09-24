@@ -12,10 +12,16 @@ def prepare_output_dir(output_root: Path, ordinal: int, policy: str,
                        suffix: str | None = None) -> Path | None:
     """Return the output dir for a script, applying the conflict policy.
 
-    - OVERWRITE: reuse (create if absent).
-    - SKIP: return None if it already exists.
-    - TIMESTAMP: if it exists, create a sibling '<n>_<suffix>' dir.
+    If the '<n>' dir does not exist yet it is created and returned regardless of
+    policy (the policy only matters on a conflict). On conflict:
+    - OVERWRITE: reuse the existing dir as-is. Existing files are NOT deleted;
+      the pipeline overwrites individual files by name.
+    - SKIP: return None (caller skips this script).
+    - TIMESTAMP: create and return a sibling '<n>_<suffix>' dir (suffix is a
+      timestamp string the caller supplies; required for this policy).
     """
+    if policy == TIMESTAMP and suffix is None:
+        raise ValueError("TIMESTAMP policy requires a suffix")
     base = Path(output_root) / str(ordinal)
     if not base.exists():
         base.mkdir(parents=True, exist_ok=True)

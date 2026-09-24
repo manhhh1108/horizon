@@ -1,8 +1,24 @@
 # horizon_tool/tests/test_output_manager.py
+import pytest
+
 from horizon_tool.core.output_manager import (
     prepare_output_dir, output_paths, save_raw_response,
     OVERWRITE, SKIP, TIMESTAMP,
 )
+
+
+def test_timestamp_without_suffix_raises(tmp_path):
+    (tmp_path / "5").mkdir()
+    with pytest.raises(ValueError):
+        prepare_output_dir(tmp_path, 5, TIMESTAMP)  # suffix omitted
+
+
+def test_save_raw_response_overwrites(tmp_path):
+    d = tmp_path / "1"
+    d.mkdir()
+    save_raw_response(d, "bản đầu")
+    p = save_raw_response(d, "bản sau")
+    assert p.read_text(encoding="utf-8") == "bản sau"
 
 
 def test_prepare_creates_dir(tmp_path):
