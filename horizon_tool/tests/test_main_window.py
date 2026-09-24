@@ -43,6 +43,19 @@ def test_idle_state_only_start_enabled(qtbot):
     assert not win.stop_btn.isEnabled()
 
 
+def test_open_accounts_window(qtbot, tmp_path, monkeypatch):
+    import horizon_tool.gui.main_window as mw
+    # Redirect state/profiles to a temp dir so the test never touches real data.
+    monkeypatch.setattr(mw, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(mw, "PROFILES_DIR", tmp_path / "profiles")
+    app = QApplication.instance() or QApplication([])
+    win = mw.MainWindow(AppConfig.load(CONFIG))
+    qtbot.addWidget(win)
+    win.open_accounts_window()
+    assert win.accounts_window is not None
+    assert win.accounts_window.isVisible()
+
+
 def test_run_completes_and_returns_to_idle(qtbot):
     app = QApplication.instance() or QApplication([])
     win = MainWindow(AppConfig.load(CONFIG))

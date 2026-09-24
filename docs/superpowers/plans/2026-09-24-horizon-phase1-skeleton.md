@@ -839,7 +839,7 @@ def test_worker_emits_log_and_finished(qtbot):
     logs: list[str] = []
     worker.log.connect(logs.append)
 
-    with qtbot.waitSignal(worker.finished, timeout=3000):
+    with qtbot.waitSignal(worker.done, timeout=3000):
         worker.start()
 
     assert any("Giai đoạn 1" in m for m in logs)
@@ -868,7 +868,9 @@ class PipelineWorker(QThread):
 
     log = Signal(str)                 # a line for the live log pane
     progress = Signal(int, str)       # (ordinal, status text) for the table
-    finished = Signal()               # emitted when the run ends
+    done = Signal()                   # emitted when the run ends (NOT `finished`:
+                                      # that name shadows QThread's built-in
+                                      # signal and never fires under PySide6)
 
     def __init__(self, scripts: list[int], parent=None) -> None:
         super().__init__(parent)
@@ -894,7 +896,7 @@ class PipelineWorker(QThread):
             self.progress.emit(ordinal, "Xong (giả lập)")
             self.log.emit(f"Đã xử lý (giả lập) kịch bản {ordinal}.")
             self.processed += 1
-        self.finished.emit()
+        self.done.emit()
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
