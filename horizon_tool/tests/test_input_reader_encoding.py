@@ -20,6 +20,9 @@ def test_reads_utf16(tmp_path):
 
 
 def test_reads_cp1258(tmp_path):
+    # "Cà phê Đà" uses only precomposed letters cp1258 supports; the encoded
+    # bytes are invalid UTF-8, so the reader must fall through to cp1258.
+    text = "Cà phê Đà"
     p = tmp_path / "d.txt"
-    p.write_bytes("Tiếng Việt".encode("cp1258"))
-    assert read_text_file(p) == "Tiếng Việt"
+    p.write_bytes(text.encode("cp1258"))
+    assert read_text_file(p) == text

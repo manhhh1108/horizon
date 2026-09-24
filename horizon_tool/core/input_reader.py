@@ -7,9 +7,10 @@ from pathlib import Path
 
 import docx  # python-docx
 
-# Tried in order. utf-8-sig also decodes plain UTF-8; utf-16 catches BOM'd
-# UTF-16; cp1258 is a single-byte last resort that rarely fails.
-_ENCODINGS = ("utf-8-sig", "utf-16", "utf-8", "cp1258")
+# BOM-less fallbacks tried in order after BOM detection. utf-8 is tried first
+# because it errors on invalid sequences; cp1258 is a single-byte last resort
+# that decodes almost anything, so it must come last.
+_FALLBACK_ENCODINGS = ("utf-8", "cp1258")
 
 _NUMBER_RE = re.compile(r"\d+")
 
@@ -17,9 +18,19 @@ _SUPPORTED_SUFFIXES = {".txt", ".docx"}
 
 
 def read_text_file(path: Path) -> str:
-    """Read a .txt file, auto-detecting a supported encoding."""
+    """Read a .txt file, auto-detecting a supported encoding.
+
+    A byte-order mark is honoured explicitly (UTF-16 LE/BE, UTF-8-BOM), because
+    UTF-16 decoding is greedy and would otherwise mis-decode single-byte
+    (e.g. cp1258) content into garbage without raising. Without a BOM, UTF-8 is
+    tried first, then cp1258 as a last resort.
+    """
     raw = path.read_bytes()
-    for enc in _ENCODINGS:
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return raw.decode("utf-16")
+    if raw.startswith(b"\xef\xbb\xbf"):
+        return raw.decode("utf-8-sig")
+    for enc in _FALLBACK_ENCODINGS:
         try:
             return raw.decode(enc)
         except (UnicodeDecodeError, UnicodeError):
