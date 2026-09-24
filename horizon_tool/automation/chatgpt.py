@@ -11,10 +11,11 @@ from dataclasses import dataclass
 from typing import Callable
 
 from horizon_tool.automation.browser import BrowserSession
+from horizon_tool.core.section_parser import merge_continue_parts
 
 
 def should_continue(response_text: str, continue_regex: str) -> bool:
-    """True if a response ends with a [PART X COMPLETE …] marker."""
+    """True if a response contains a [PART X COMPLETE …] marker."""
     return re.search(continue_regex, response_text, flags=re.IGNORECASE) is not None
 
 
@@ -25,15 +26,17 @@ def run_continue_loop(read_response: Callable[[], str],
 
     read_response(): return the latest completed assistant message.
     send_message(text): send a user message (used to send 'CONTINUE').
-    Stops when a part lacks the marker or max_parts is reached.
+    Stops when a part lacks the marker or max_parts is reached. CONTINUE is
+    never sent after the final collected part (including when the cap is hit).
     """
     parts: list[str] = []
-    for _ in range(max_parts):
+    for i in range(max_parts):
         text = read_response()
         parts.append(text)
         if not should_continue(text, continue_regex):
             break
-        send_message("CONTINUE")
+        if i < max_parts - 1:  # don't CONTINUE past the last part we can collect
+            send_message("CONTINUE")
     return parts
 
 
@@ -79,7 +82,6 @@ class ChatGPTWriter:
             self._read_last_response, self._send, self._continue_regex,
             max_parts=int(self.config.get("chatgpt", {}).get("max_parts", 20)),
         )
-        from horizon_tool.core.section_parser import merge_continue_parts
         raw = merge_continue_parts(parts, self._continue_regex)
         return ScriptResult(
             raw_text=raw,
@@ -97,12 +99,32 @@ class ChatGPTWriter:
         self.session.click_with_retry(sel["send_button"])
 
     def _read_last_response(self) -> str:
-        # TODO: kiểm tra selector thực tế — wait for the Stop button to vanish
-        # (response finished), then read the last assistant message text.
+        self._wait_response_complete()
         sel = self.selectors["chatgpt"]
         self.session.wait_for(sel["assistant_message"])
         loc = self.session.page.locator(sel["assistant_message"]).last
         return loc.inner_text()
+
+    def _wait_response_complete(self) -> None:
+        # A reply is still streaming while the Stop button is shown; wait for it
+        # to appear then vanish so we read a COMPLETED (not stale/streaming)
+        # message rather than the previous turn's text.
+        # TODO: kiểm tra selector thực tế — verify the stop_button selector; if
+        # appear→disappear proves unreliable, track the assistant-message count
+        # and wait for a brand-new message instead of the previous one.
+        sel = self.selectors["chatgpt"]
+        stop = sel.get("stop_button")
+        if not stop:
+            return
+        resp_ms = int(self.config.get("timeouts", {}).get("response_wait_seconds", 600)) * 1000
+        try:
+            self.session.page.wait_for_selector(stop, timeout=5000)  # streaming began
+        except Exception:  # noqa: BLE001 - may have already started/finished
+            pass
+        try:
+            self.session.page.wait_for_selector(stop, state="hidden", timeout=resp_ms)
+        except Exception:  # noqa: BLE001 - best effort until selectors are tuned
+            pass
 
     def _current_url(self) -> str | None:
         try:

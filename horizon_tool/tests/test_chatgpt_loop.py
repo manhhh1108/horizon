@@ -37,3 +37,5 @@ def test_run_continue_loop_respects_max_parts():
     sent: list[str] = []
     parts = run_continue_loop(read_response, lambda t: sent.append(t), CONTINUE, max_parts=3)
     assert len(parts) == 3  # stopped at the cap
+    # No CONTINUE after the final collected part: 3 parts -> 2 CONTINUEs.
+    assert len(sent) == 2
