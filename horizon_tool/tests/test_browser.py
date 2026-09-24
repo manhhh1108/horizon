@@ -39,6 +39,17 @@ def test_paste_text_replaces_existing(session):
     assert value == "mới"
 
 
+def test_paste_text_into_contenteditable(session):
+    # ChatGPT/Grok use contenteditable, not <textarea>; verify clear + insert.
+    session.page.set_content(
+        "<div id='ed' contenteditable='true'>nội dung cũ</div>"
+    )
+    session.paste_text("#ed", "văn bản mới\ndòng hai")
+    text = session.page.eval_on_selector("#ed", "e => e.innerText")
+    assert "văn bản mới" in text
+    assert "nội dung cũ" not in text  # old content cleared
+
+
 def test_click_with_retry_success(session):
     session.page.set_content(
         "<button id='go' onclick=\"this.textContent='clicked'\">go</button>"
@@ -51,3 +62,15 @@ def test_click_with_retry_raises_when_absent(session):
     session.page.set_content("<div>nothing</div>")
     with pytest.raises(Exception):
         session.click_with_retry("#missing")
+
+
+def test_page_property_raises_before_start(tmp_path):
+    # No browser launched — pure guard, no Chromium needed.
+    s = BrowserSession(tmp_path / "profile", headless=True)
+    with pytest.raises(RuntimeError):
+        _ = s.page
+
+
+def test_close_without_start_is_safe(tmp_path):
+    s = BrowserSession(tmp_path / "profile", headless=True)
+    s.close()  # must not raise even though start() was never called

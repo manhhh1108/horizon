@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from playwright.sync_api import Page, sync_playwright
+from playwright.sync_api import Locator, Page, sync_playwright
 
 
 class BrowserSession:
@@ -67,14 +67,16 @@ class BrowserSession:
         return self._page
 
     # ----- helpers --------------------------------------------------------
-    def goto(self, url: str, timeout_ms: int | None = None) -> None:
-        self.page.goto(url, timeout=timeout_ms or self.element_timeout_ms)
+    def _timeout(self, timeout_ms: int | None) -> int:
+        # A caller may pass 0 to mean "no timeout"; only None falls back.
+        return self.element_timeout_ms if timeout_ms is None else timeout_ms
 
-    def wait_for(self, selector: str, timeout_ms: int | None = None):
+    def goto(self, url: str, timeout_ms: int | None = None) -> None:
+        self.page.goto(url, timeout=self._timeout(timeout_ms))
+
+    def wait_for(self, selector: str, timeout_ms: int | None = None) -> Locator:
         """Wait until a selector is present; return its first locator."""
-        self.page.wait_for_selector(
-            selector, timeout=timeout_ms or self.element_timeout_ms,
-        )
+        self.page.wait_for_selector(selector, timeout=self._timeout(timeout_ms))
         return self.page.locator(selector).first
 
     def is_visible(self, selector: str) -> bool:
@@ -84,7 +86,7 @@ class BrowserSession:
     def click_with_retry(self, selector: str, attempts: int | None = None) -> None:
         """Click a selector, retrying with linear backoff on failure."""
         attempts = attempts or self.retry_attempts
-        last_error: Exception | None = None
+        last_error: Exception = RuntimeError("click_with_retry ran zero attempts")
         for i in range(attempts):
             try:
                 self.page.click(selector, timeout=self.element_timeout_ms)
@@ -92,14 +94,16 @@ class BrowserSession:
             except Exception as exc:  # noqa: BLE001 - retried below
                 last_error = exc
                 self.page.wait_for_timeout(300 * (i + 1))
-        raise last_error  # type: ignore[misc]
+        raise last_error
 
     def paste_text(self, selector: str, text: str) -> None:
         """Insert long text in one shot (not char-by-char) after clearing.
 
         Uses keyboard.insert_text, which works for <input>, <textarea>, and
         contenteditable — the last is what ChatGPT/Grok use. This mimics a
-        paste and avoids slow per-character typing.
+        paste and avoids slow per-character typing. Note: some framework-backed
+        contenteditable editors need site-specific event handling; that is
+        tuned against the live sites in Phase 3.
         """
         loc = self.page.locator(selector).first
         loc.click()
