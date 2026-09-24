@@ -29,3 +29,10 @@ def test_resolve_video_downloads_when_ok():
                            download=lambda: "out/1.mp4")
     assert result.status == STATUS_DONE
     assert result.path == "out/1.mp4"
+
+
+def test_resolve_video_refusal_wins_when_text_matches_both():
+    # Text hits both a refusal and an error pattern; refusal is checked first.
+    both = "against our content policy — something went wrong"
+    result = resolve_video(both, REFUSALS, ERRORS, download=lambda: "x.mp4")
+    assert result.status == STATUS_REJECTED
