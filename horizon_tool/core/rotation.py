@@ -36,8 +36,11 @@ def run_step_with_rotation(*, service: str, account_manager: AccountManager,
         if account is None:
             raise AllAccountsExhausted(service)
         account_manager.set_status(account.id, STATUS_IN_USE)
-        worker = make_worker(account)
+        worker = None
         try:
+            # Building the worker (launching a browser) can fail — keep it inside
+            # the try so the account is never left stranded in `in_use`.
+            worker = make_worker(account)
             result = do_step(worker)
         except QuotaExhausted:
             account_manager.set_status(account.id, STATUS_QUOTA)
@@ -51,4 +54,5 @@ def run_step_with_rotation(*, service: str, account_manager: AccountManager,
             account_manager.set_status(account.id, STATUS_READY)
             return result, account
         finally:
-            _close(worker)
+            if worker is not None:
+                _close(worker)

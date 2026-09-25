@@ -98,7 +98,9 @@ class GrokVideoMaker:
         # refusal or render error can be detected. Returns that text.
         timeout_ms = int(self.config.get("grok", {}).get("render_timeout_seconds", 600)) * 1000
         self.session.wait_for(self.selectors["grok"]["video_result"], timeout_ms=timeout_ms)
-        status_text = ""  # (placeholder read result today)
+        status_text = ""  # placeholder — the real status read lands with live tuning
+        # NOTE: with status_text == "" this quota check is inert; it becomes live
+        # once _wait_and_read_status returns the real Grok status text.
         if detect_quota(status_text, self.selectors["patterns"]["quota_exhausted"]):
             raise QuotaExhausted("grok", status_text)
         return status_text

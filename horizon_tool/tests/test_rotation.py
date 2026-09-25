@@ -73,3 +73,38 @@ def test_non_quota_error_frees_account_and_propagates(tmp_path):
             make_worker=lambda acc: FakeWorker(acc),
             do_step=lambda w: (_ for _ in ()).throw(RuntimeError("boom")))
     assert mgr.get(a1.id).status == STATUS_READY   # not a quota problem
+
+
+def test_make_worker_failure_frees_account_not_stuck_in_use(tmp_path):
+    # Building the worker (e.g. launching a browser) fails: the account must be
+    # freed back to ready, never stranded in `in_use`, and the error propagates.
+    mgr = make_mgr(tmp_path, 1)
+    a1 = mgr.list(SERVICE_CHATGPT)[0]
+
+    def boom_factory(acc):
+        raise RuntimeError("không mở được trình duyệt")
+
+    with pytest.raises(RuntimeError):
+        run_step_with_rotation(
+            service=SERVICE_CHATGPT, account_manager=mgr,
+            make_worker=boom_factory, do_step=lambda w: "unreached")
+    assert mgr.get(a1.id).status == STATUS_READY
+    assert mgr.get(a1.id).status != STATUS_IN_USE
+
+
+def test_log_callback_invoked_on_quota_switch(tmp_path):
+    mgr = make_mgr(tmp_path, 2)
+    logs: list[str] = []
+    calls = {"n": 0}
+
+    def do_step(w):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise QuotaExhausted("chatgpt")
+        return "OK"
+
+    result, _ = run_step_with_rotation(
+        service=SERVICE_CHATGPT, account_manager=mgr,
+        make_worker=lambda acc: FakeWorker(acc), do_step=do_step, log=logs.append)
+    assert result == "OK"
+    assert any("hết quota" in m for m in logs)   # switch was logged
