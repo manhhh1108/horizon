@@ -92,6 +92,76 @@ def test_on_exhausted_logs(qtbot, tmp_path, monkeypatch):
     assert "hết tài khoản chatgpt" in win.log_pane.toPlainText().lower()
 
 
+def test_on_resume_unpauses_running_worker(qtbot, tmp_path, monkeypatch):
+    import horizon_tool.gui.main_window as mw
+    monkeypatch.setattr(mw, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(mw, "PROFILES_DIR", tmp_path / "profiles")
+    app = QApplication.instance() or QApplication([])
+    win = mw.MainWindow(AppConfig.load(CONFIG))
+    qtbot.addWidget(win)
+
+    class FakeRunningWorker:
+        def isRunning(self):
+            return True
+        def set_paused(self, paused):
+            self.paused = paused
+        def request_stop(self):  # used by closeEvent on teardown
+            pass
+        def wait(self, ms=0):
+            return True
+
+    win.worker = FakeRunningWorker()
+    launched = {"called": False}
+    monkeypatch.setattr(win, "_launch_run", lambda *, resume: launched.update(called=True))
+    win.on_resume()   # a worker is running -> unpause, do NOT relaunch
+    assert win.worker.paused is False
+    assert launched["called"] is False
+
+
+def test_auto_resume_tick_resets_quota_and_resumes(qtbot, tmp_path, monkeypatch):
+    import horizon_tool.gui.main_window as mw
+    from horizon_tool.core.account_manager import SERVICE_CHATGPT, STATUS_QUOTA, STATUS_READY
+    monkeypatch.setattr(mw, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(mw, "PROFILES_DIR", tmp_path / "profiles")
+    app = QApplication.instance() or QApplication([])
+    win = mw.MainWindow(AppConfig.load(CONFIG))
+    qtbot.addWidget(win)
+    acc = win.account_manager.add(SERVICE_CHATGPT, "C1")
+    win.account_manager.set_status(acc.id, STATUS_QUOTA)
+    resumed = {"called": False}
+    monkeypatch.setattr(win, "on_resume", lambda: resumed.update(called=True))
+
+    win._auto_resume_tick()   # no worker running -> reset quota accounts + resume
+
+    assert win.account_manager.get(acc.id).status == STATUS_READY
+    assert resumed["called"] is True
+
+
+def test_auto_resume_tick_skips_while_worker_running(qtbot, tmp_path, monkeypatch):
+    import horizon_tool.gui.main_window as mw
+    from horizon_tool.core.account_manager import SERVICE_CHATGPT, STATUS_QUOTA
+    monkeypatch.setattr(mw, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(mw, "PROFILES_DIR", tmp_path / "profiles")
+    app = QApplication.instance() or QApplication([])
+    win = mw.MainWindow(AppConfig.load(CONFIG))
+    qtbot.addWidget(win)
+    acc = win.account_manager.add(SERVICE_CHATGPT, "C1")
+    win.account_manager.set_status(acc.id, STATUS_QUOTA)
+
+    class Running:
+        def isRunning(self): return True
+        def request_stop(self): pass       # used by closeEvent on teardown
+        def wait(self, ms=0): return True
+    win.worker = Running()
+    resumed = {"called": False}
+    monkeypatch.setattr(win, "on_resume", lambda: resumed.update(called=True))
+
+    win._auto_resume_tick()   # worker running -> must NOT touch accounts or resume
+
+    assert win.account_manager.get(acc.id).status == STATUS_QUOTA  # untouched
+    assert resumed["called"] is False
+
+
 def test_step_status_upserts_and_maps_columns(qtbot):
     app = QApplication.instance() or QApplication([])
     win = MainWindow(AppConfig.load(CONFIG))

@@ -21,7 +21,8 @@ from horizon_tool.automation.chatgpt import ChatGPTWriter
 from horizon_tool.core.account_manager import AccountManager, STATUS_QUOTA, STATUS_READY
 from horizon_tool.core.config_loader import AppConfig, load_yaml
 from horizon_tool.core.plugin_manager import (
-    list_plugins, read_plugin_text, apply_variables, plugin_hash,
+    list_plugins, read_plugin_text, apply_variables,
+    plugin_hash as compute_plugin_hash,  # aliased so the kwarg name can't shadow it
 )
 from horizon_tool.gui.accounts_window import AccountsWindow
 from horizon_tool.gui.worker import PipelineWorker, ScriptRunWorker
@@ -219,7 +220,7 @@ class MainWindow(QMainWindow):
             video_duration=self.duration_combo.currentText(),
             video_quality=self.quality_combo.currentText(),
             plugin_name=self.plugin_combo.currentText(),
-            plugin_hash=plugin_hash(raw_plugin),
+            plugin_hash=compute_plugin_hash(raw_plugin),
             state_path=str(Path(output_dir) / "run_state.json"), resume=resume,
             config=self.config.raw, parent=self)
         self.worker.log.connect(self.append_log)
