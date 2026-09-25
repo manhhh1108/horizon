@@ -18,16 +18,6 @@ from horizon_tool.core.statuses import (
 )
 
 
-def _close_writer(writer) -> None:
-    """Close a writer's browser session if it exposes one (best effort)."""
-    session = getattr(writer, "session", None)
-    if session is not None and hasattr(session, "close"):
-        try:
-            session.close()
-        except Exception:  # noqa: BLE001 - cleanup must never raise
-            pass
-
-
 class PipelineWorker(QThread):
     """Runs script processing off the GUI thread. Cooperative pause/stop."""
 
