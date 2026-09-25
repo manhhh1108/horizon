@@ -127,13 +127,16 @@ def test_on_error_hook_called_before_close(tmp_path):
     captured = {}
     def on_error(worker):
         captured["worker"] = worker
+        captured["closed_at_call"] = worker.closed   # snapshot ordering, not a live ref
     with pytest.raises(RuntimeError):
         run_step_with_rotation(
             service=SERVICE_CHATGPT, account_manager=mgr,
             make_worker=lambda acc: FakeWorker(acc),
             do_step=lambda w: (_ for _ in ()).throw(RuntimeError("boom")),
             on_error=on_error)
-    assert "worker" in captured           # hook fired with the live worker
+    assert "worker" in captured                 # hook fired with the live worker
+    assert captured["closed_at_call"] is False  # ...and the session was still open
+    assert captured["worker"].closed is True    # ...but closed afterward (finally)
 
 
 def test_log_callback_invoked_on_quota_switch(tmp_path):

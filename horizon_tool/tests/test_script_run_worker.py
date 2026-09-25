@@ -360,9 +360,13 @@ def test_conflict_timestamp_uses_suffixed_folder(qtbot, tmp_path):
 
 
 def test_unknown_error_captures_screenshot(qtbot, tmp_path):
+    # An unknown error on script 1 must: screenshot into that script's folder,
+    # mark the step FAILED, report the script as failed, AND still process the
+    # next script (one failure never stops the run) — spec §12.
     app = QCoreApplication.instance() or QCoreApplication([])
     (tmp_path / "in").mkdir()
     (tmp_path / "in" / "1.txt").write_text("k", encoding="utf-8")
+    (tmp_path / "in" / "2.txt").write_text("k", encoding="utf-8")
     mgr = _mgr(tmp_path)
     shots = []
 
@@ -371,19 +375,30 @@ def test_unknown_error_captures_screenshot(qtbot, tmp_path):
             shots.append(path)
             Path(path).write_bytes(b"PNG")
 
-    class BoomWriter:
+    class BoomThenOk(FakeWriter):
+        """Raise an unknown error on script 1, succeed on script 2."""
         def __init__(self): self.session = ShotSession()
         def write_script(self, *a, **k):
-            raise RuntimeError("lỗi lạ")
-        def render_image(self, *a, **k):
-            from horizon_tool.automation.chatgpt import ImageRenderResult
-            return ImageRenderResult(status=STATUS_DONE)
+            if not BoomThenOk.first_used:
+                BoomThenOk.first_used = True
+                raise RuntimeError("lỗi lạ")
+            return ScriptResult(raw_text=FULL)
+    BoomThenOk.first_used = False
 
-    w = _worker(tmp_path, mgr, writer_factory=lambda acc: BoomWriter(), do_video=False)
+    statuses, finished = [], []
+    w = _worker(tmp_path, mgr, writer_factory=lambda acc: BoomThenOk(), do_video=False)
+    w.step_status.connect(lambda o, s, st: statuses.append((o, s, st)))
+    w.script_finished.connect(lambda o, r: finished.append((o, r)))
     with qtbot.waitSignal(w.done, timeout=5000):
         w.start()
+    # script 1: screenshotted, marked failed, reported failed
     assert shots and shots[0].endswith("error.png")
     assert (tmp_path / "out" / "1" / "error.png").exists()
+    assert (1, "word", STATUS_FAILED) in statuses
+    assert (1, STATUS_FAILED) in finished
+    # script 2 still ran to completion -> run did not stop after the failure
+    assert (tmp_path / "out" / "2" / "2.docx").exists()
+    assert (2, STATUS_DONE) in finished
     assert w.wait(2000)
 
 

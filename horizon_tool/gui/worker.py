@@ -202,9 +202,10 @@ class ScriptRunWorker(QThread):
         """Best-effort browser screenshot into the script's output folder."""
         session = getattr(worker, "session", None)
         if session is not None and hasattr(session, "screenshot"):
+            dest = Path(out_dir) / "error.png"
             try:
-                session.screenshot(str(Path(out_dir) / "error.png"))
-                self.log.emit(f"Đã lưu ảnh màn hình lỗi: {out_dir}/error.png")
+                session.screenshot(str(dest))
+                self.log.emit(f"Đã lưu ảnh màn hình lỗi: {dest}")
             except Exception:  # noqa: BLE001 - screenshot capture must not mask the real error
                 pass
 
