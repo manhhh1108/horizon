@@ -68,6 +68,30 @@ def test_start_without_inputs_shows_message(qtbot):
     assert win.worker is None
 
 
+def test_resume_button_starts_resume_run_when_idle(qtbot, tmp_path, monkeypatch):
+    import horizon_tool.gui.main_window as mw
+    monkeypatch.setattr(mw, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(mw, "PROFILES_DIR", tmp_path / "profiles")
+    app = QApplication.instance() or QApplication([])
+    win = mw.MainWindow(AppConfig.load(CONFIG))
+    qtbot.addWidget(win)
+    launched = {}
+    monkeypatch.setattr(win, "_launch_run", lambda *, resume: launched.setdefault("resume", resume))
+    win.on_resume()   # idle -> should launch a resume run
+    assert launched == {"resume": True}
+
+
+def test_on_exhausted_logs(qtbot, tmp_path, monkeypatch):
+    import horizon_tool.gui.main_window as mw
+    monkeypatch.setattr(mw, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(mw, "PROFILES_DIR", tmp_path / "profiles")
+    app = QApplication.instance() or QApplication([])
+    win = mw.MainWindow(AppConfig.load(CONFIG))
+    qtbot.addWidget(win)
+    win._on_exhausted("chatgpt")
+    assert "hết tài khoản chatgpt" in win.log_pane.toPlainText().lower()
+
+
 def test_step_status_upserts_and_maps_columns(qtbot):
     app = QApplication.instance() or QApplication([])
     win = MainWindow(AppConfig.load(CONFIG))
