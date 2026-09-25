@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from horizon_tool.automation.browser import BrowserSession
+from horizon_tool.core.exceptions import QuotaExhausted
 from horizon_tool.core.section_parser import merge_continue_parts
 from horizon_tool.core.statuses import STATUS_DONE, STATUS_FAILED, STATUS_REJECTED
 
@@ -20,11 +21,18 @@ def should_continue(response_text: str, continue_regex: str) -> bool:
     return re.search(continue_regex, response_text, flags=re.IGNORECASE) is not None
 
 
+def _any_match(text: str, patterns: list[str]) -> bool:
+    return any(re.search(p, text, flags=re.IGNORECASE) for p in patterns)
+
+
 def detect_refusal(response_text: str, refusal_patterns: list[str]) -> bool:
     """True if the response matches any policy-refusal pattern (case-insensitive)."""
-    return any(
-        re.search(p, response_text, flags=re.IGNORECASE) for p in refusal_patterns
-    )
+    return _any_match(response_text, refusal_patterns)
+
+
+def detect_quota(response_text: str, quota_patterns: list[str]) -> bool:
+    """True if the response matches any quota-exhausted pattern (case-insensitive)."""
+    return _any_match(response_text, quota_patterns)
 
 
 @dataclass
@@ -133,7 +141,10 @@ class ChatGPTWriter:
         sel = self.selectors["chatgpt"]
         self.session.wait_for(sel["assistant_message"])
         loc = self.session.page.locator(sel["assistant_message"]).last
-        return loc.inner_text()
+        text = loc.inner_text()
+        if detect_quota(text, self.selectors["patterns"]["quota_exhausted"]):
+            raise QuotaExhausted("chatgpt", text)
+        return text
 
     def _wait_response_complete(self) -> None:
         # A reply is still streaming while the Stop button is shown; wait for it
