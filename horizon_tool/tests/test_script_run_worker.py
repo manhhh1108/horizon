@@ -148,6 +148,36 @@ def test_resume_skips_completed_steps(qtbot, tmp_path):
     assert w2.wait(2000)
 
 
+def test_video_quota_rotates_to_second_grok_account(qtbot, tmp_path):
+    # The Grok/video step must rotate accounts on quota (not silently swallow it).
+    app = QCoreApplication.instance() or QCoreApplication([])
+    (tmp_path / "in").mkdir()
+    (tmp_path / "in" / "1.txt").write_text("k", encoding="utf-8")
+    mgr = AccountManager(tmp_path / "a.json", tmp_path / "profiles")
+    mgr.add(SERVICE_CHATGPT, "C1")
+    g1 = mgr.add(SERVICE_GROK, "G1"); g2 = mgr.add(SERVICE_GROK, "G2")
+    quota = {"fired": False}
+
+    class QuotaThenOkVideo:
+        def __init__(self): self.session = FakeSession()
+        def make_video(self, image_path, motion_prompt, duration, quality, dest_path):
+            if not quota["fired"]:
+                quota["fired"] = True
+                raise QuotaExhausted("grok")
+            Path(dest_path).write_bytes(b"MP4")
+            return VideoResult(status=STATUS_DONE, path=dest_path)
+
+    statuses = []
+    w = _worker(tmp_path, mgr, video_maker_factory=lambda acc: QuotaThenOkVideo())
+    w.step_status.connect(lambda o, s, st: statuses.append((o, s, st)))
+    with qtbot.waitSignal(w.done, timeout=5000):
+        w.start()
+    assert mgr.get(g1.id).status == STATUS_QUOTA          # first grok account exhausted
+    assert (tmp_path / "out" / "1" / "1.mp4").exists()    # video made on the second
+    assert (1, "video", STATUS_DONE) in statuses
+    assert w.wait(2000)
+
+
 def test_intra_run_rotation_redoes_only_unfinished_substep(qtbot, tmp_path):
     # Word + the 9:16 image succeed on account 1; the 16:9 image hits quota.
     # After switching to account 2, ONLY the 16:9 image is redone — the word

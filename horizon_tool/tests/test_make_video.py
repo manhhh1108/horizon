@@ -1,6 +1,9 @@
 # horizon_tool/tests/test_make_video.py
+import pytest
+
 from horizon_tool.core.pipeline import make_video
 from horizon_tool.automation.grok import VideoResult
+from horizon_tool.core.exceptions import QuotaExhausted
 from horizon_tool.core.statuses import (
     STATUS_DONE, STATUS_REJECTED, STATUS_SKIPPED, STATUS_FAILED,
 )
@@ -87,3 +90,15 @@ def test_make_video_exception_is_failed(tmp_path):
                         motion_prompt="p", duration="10s", quality="720p",
                         image_path=str(tmp_path / "5_9x16.png"), do_video=True)
     assert status == STATUS_FAILED
+
+
+def test_make_video_reraises_quota_for_rotation(tmp_path):
+    # QuotaExhausted must NOT be swallowed as FAILED — it propagates so the
+    # rotation layer can switch Grok accounts.
+    class QuotaMaker:
+        def make_video(self, *a, **k):
+            raise QuotaExhausted("grok")
+    with pytest.raises(QuotaExhausted):
+        make_video(maker=QuotaMaker(), output_dir=tmp_path, ordinal=6, config=CONFIG,
+                   motion_prompt="p", duration="10s", quality="720p",
+                   image_path=str(tmp_path / "6_9x16.png"), do_video=True)
