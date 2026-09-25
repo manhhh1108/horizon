@@ -186,6 +186,13 @@ class ScriptRunWorker(QThread):
         parsed = parse_sections(raw_path.read_text(encoding="utf-8"), self._heading_regexes)
         return (parsed.sections.get("image_9x16"), parsed.sections.get("thumbnail_16x9"))
 
+    def _tracking_factory(self, factory):
+        """Wrap a per-account factory so the account in use is reported live."""
+        def make(account):
+            self.account_in_use.emit(account.display_name)
+            return factory(account)
+        return make
+
     # ----- main loop ------------------------------------------------------
     def run(self) -> None:  # noqa: D401 - QThread entry point
         scripts, skipped = scan_input_folder(self._input_dir)
@@ -213,17 +220,20 @@ class ScriptRunWorker(QThread):
             started = time.monotonic()
             account_name = ""
             stop_after = False
-            failed = False
             try:
                 self.step_status.emit(ordinal, "word", STATUS_RUNNING)
-                _, chatgpt_account = run_step_with_rotation(
-                    service="chatgpt", account_manager=self._accounts,
-                    make_worker=self._writer_factory,
-                    do_step=lambda w: self._chatgpt_block(w, script, out_dir),
-                    log=self.log.emit,
-                )
-                account_name = chatgpt_account.display_name
-                self.account_in_use.emit(account_name)
+                if not self._do_script and not self._state.is_done(ordinal, "word"):
+                    # Nothing for ChatGPT to do (word off, no prior story): skip
+                    # the whole block without launching a browser/account.
+                    self._chatgpt_block(None, script, out_dir)
+                else:
+                    _, chatgpt_account = run_step_with_rotation(
+                        service="chatgpt", account_manager=self._accounts,
+                        make_worker=self._tracking_factory(self._writer_factory),
+                        do_step=lambda w: self._chatgpt_block(w, script, out_dir),
+                        log=self.log.emit,
+                    )
+                    account_name = chatgpt_account.display_name
                 # persist section-5 motion prompt for the (separate) Grok block
                 self._save_video_prompt(ordinal, out_dir)
                 self._run_video_step(ordinal, out_dir)
@@ -232,7 +242,6 @@ class ScriptRunWorker(QThread):
                 self.exhausted.emit(exc.service)
                 stop_after = True   # end the run after recording this script's row
             except Exception as exc:  # noqa: BLE001 - one script must not stop the run
-                failed = True
                 for step in ("word", "img_9x16", "img_16x9", "video"):
                     if not self._state.is_done(ordinal, step):
                         self._state.set_step(ordinal, step, STATUS_FAILED)
@@ -242,7 +251,12 @@ class ScriptRunWorker(QThread):
                 # Always record the row, including the script that hit exhaustion.
                 self._write_report_row(report, script, account_name, started)
             if not stop_after:
-                self.script_finished.emit(ordinal, "failed" if failed else "done")
+                # Outcome is derived from state so a contained video/image failure
+                # (swallowed as STATUS_FAILED) still counts as a failed script.
+                had_fail = any(
+                    self._state.get_step(ordinal, s) == STATUS_FAILED
+                    for s in ("word", "img_9x16", "img_16x9", "video"))
+                self.script_finished.emit(ordinal, STATUS_FAILED if had_fail else STATUS_DONE)
             if stop_after:
                 break
         report.save()
@@ -262,7 +276,7 @@ class ScriptRunWorker(QThread):
         try:
             _, _ = run_step_with_rotation(
                 service="grok", account_manager=self._accounts,
-                make_worker=self._video_maker_factory,
+                make_worker=self._tracking_factory(self._video_maker_factory),
                 do_step=lambda m: self._grok_block(m, ordinal, out_dir),
                 log=self.log.emit,
             )

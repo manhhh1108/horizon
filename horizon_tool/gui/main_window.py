@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 from horizon_tool.automation.browser import BrowserSession
 from horizon_tool.automation.chatgpt import ChatGPTWriter
 from horizon_tool.core.account_manager import AccountManager, STATUS_QUOTA, STATUS_READY
+from horizon_tool.core.statuses import STATUS_DONE, STATUS_FAILED
 from horizon_tool.core.config_loader import AppConfig, load_yaml
 from horizon_tool.core.plugin_manager import (
     list_plugins, read_plugin_text, apply_variables,
@@ -150,7 +151,8 @@ class MainWindow(QMainWindow):
         return self.log_pane
 
     def _build_stats(self) -> QLabel:
-        self.stats_label = QLabel("Tổng: 0 | Xong: 0 | Bỏ qua: 0 | Lỗi: 0")
+        self.stats_label = QLabel(
+            "Tổng: 0 | Xong: 0 | Bỏ qua: 0 | Lỗi: 0 | Thời gian: 00:00 | Tài khoản: -")
         return self.stats_label
 
     # ----- behavior -------------------------------------------------------
@@ -323,7 +325,7 @@ class MainWindow(QMainWindow):
         self._refresh_stats_label()
 
     def _on_script_finished(self, ordinal: int, overall: str) -> None:
-        self._stats["done" if overall == "done" else "failed"] += 1
+        self._stats["failed" if overall == STATUS_FAILED else "done"] += 1
         self._refresh_stats_label()
 
     def _on_account_in_use(self, name: str) -> None:

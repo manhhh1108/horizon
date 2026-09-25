@@ -5,7 +5,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from horizon_tool.core.config_loader import AppConfig  # noqa: E402
 from horizon_tool.gui.main_window import MainWindow  # noqa: E402
 from horizon_tool.core.statuses import (  # noqa: E402
-    STATUS_RUNNING, STATUS_DONE, STATUS_REJECTED,
+    STATUS_RUNNING, STATUS_DONE, STATUS_FAILED, STATUS_REJECTED,
 )
 from pathlib import Path  # noqa: E402
 
@@ -182,8 +182,8 @@ def test_stats_label_updates_from_signals(qtbot):
     qtbot.addWidget(win)
     win._reset_stats()
     win._on_run_totals(3, 1)
-    win._on_script_finished(1, "done")
-    win._on_script_finished(2, "failed")
+    win._on_script_finished(1, STATUS_DONE)
+    win._on_script_finished(2, STATUS_FAILED)
     win._on_account_in_use("C1")
     text = win.stats_label.text()
     assert "Tổng: 3" in text and "Xong: 1" in text and "Bỏ qua: 1" in text
