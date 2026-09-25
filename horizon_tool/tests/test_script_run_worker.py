@@ -216,3 +216,45 @@ def test_intra_run_rotation_redoes_only_unfinished_substep(qtbot, tmp_path):
     assert counters["img16"] == 2   # only the quota'd 16:9 image retried
     assert (tmp_path / "out" / "1" / "1_16x9.png").exists()
     assert w.wait(2000)
+
+
+def test_worker_emits_stats_signals(qtbot, tmp_path):
+    app = QCoreApplication.instance() or QCoreApplication([])
+    (tmp_path / "in").mkdir()
+    (tmp_path / "in" / "1.txt").write_text("k", encoding="utf-8")
+    mgr = _mgr(tmp_path)
+    totals, started, finished, accounts = [], [], [], []
+    w = _worker(tmp_path, mgr)
+    w.run_totals.connect(lambda t, s: totals.append((t, s)))
+    w.script_started.connect(lambda o, f: started.append((o, f)))
+    w.script_finished.connect(lambda o, st: finished.append((o, st)))
+    w.account_in_use.connect(accounts.append)
+    with qtbot.waitSignal(w.done, timeout=5000):
+        w.start()
+    assert totals == [(1, 0)]
+    assert started == [(1, "1.txt")]
+    assert finished == [(1, "done")]
+    assert accounts and accounts[0] == "C1"
+    assert w.wait(2000)
+
+
+def test_do_script_false_skips_word_and_images(qtbot, tmp_path):
+    app = QCoreApplication.instance() or QCoreApplication([])
+    (tmp_path / "in").mkdir()
+    (tmp_path / "in" / "1.txt").write_text("k", encoding="utf-8")
+    mgr = _mgr(tmp_path)
+    calls = {"n": 0}
+    class NoCallWriter(FakeWriter):
+        def write_script(self, *a, **k):
+            calls["n"] += 1
+            return super().write_script(*a, **k)
+    statuses = []
+    w = _worker(tmp_path, mgr, writer_factory=lambda acc: NoCallWriter(),
+                do_script=False, do_video=False)
+    w.step_status.connect(lambda o, s, st: statuses.append((o, s, st)))
+    with qtbot.waitSignal(w.done, timeout=5000):
+        w.start()
+    assert calls["n"] == 0                       # word never generated
+    assert (1, "word", STATUS_SKIPPED) in statuses
+    assert (1, "img_9x16", STATUS_SKIPPED) in statuses   # no prompt -> skipped
+    assert w.wait(2000)

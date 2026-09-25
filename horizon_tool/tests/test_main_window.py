@@ -174,3 +174,28 @@ def test_step_status_upserts_and_maps_columns(qtbot):
     assert win.table.item(0, 2).text() == STATUS_DONE       # word col
     assert win.table.item(0, 3).text() == STATUS_REJECTED   # 9:16 col
     assert win.table.item(1, 2).text() == STATUS_RUNNING
+
+
+def test_stats_label_updates_from_signals(qtbot):
+    app = QApplication.instance() or QApplication([])
+    win = MainWindow(AppConfig.load(CONFIG))
+    qtbot.addWidget(win)
+    win._reset_stats()
+    win._on_run_totals(3, 1)
+    win._on_script_finished(1, "done")
+    win._on_script_finished(2, "failed")
+    win._on_account_in_use("C1")
+    text = win.stats_label.text()
+    assert "Tổng: 3" in text and "Xong: 1" in text and "Bỏ qua: 1" in text
+    assert "Lỗi: 1" in text and "Tài khoản: C1" in text
+
+
+def test_script_started_fills_filename_column(qtbot):
+    app = QApplication.instance() or QApplication([])
+    win = MainWindow(AppConfig.load(CONFIG))
+    qtbot.addWidget(win)
+    win._on_script_started(7, "7.txt")
+    row = win._row_for_ordinal(7)
+    assert row is not None
+    assert win.table.item(row, 0).text() == "7"
+    assert win.table.item(row, 1).text() == "7.txt"   # Tên file column

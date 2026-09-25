@@ -67,10 +67,15 @@ class ScriptRunWorker(QThread):
     step_status = Signal(int, str, str)     # (ordinal, step_key, status)
     exhausted = Signal(str)                 # a service ran out of accounts
     done = Signal()
+    run_totals = Signal(int, int)       # (total_scripts, skipped_files)
+    script_started = Signal(int, str)   # (ordinal, input_filename)
+    script_finished = Signal(int, str)  # (ordinal, "done" | "failed")
+    account_in_use = Signal(str)        # ChatGPT account display name in use
 
     def __init__(self, *, input_dir: str, output_dir: str, selection: str,
                  plugin_text: str, heading_regexes: dict, account_manager,
                  writer_factory, video_maker_factory=None,
+                 do_script: bool = True,
                  do_9x16: bool = True, do_16x9: bool = True, do_video: bool = True,
                  video_duration: str = "", video_quality: str = "",
                  plugin_name: str = "", plugin_hash: str = "",
@@ -85,6 +90,7 @@ class ScriptRunWorker(QThread):
         self._accounts = account_manager
         self._writer_factory = writer_factory
         self._video_maker_factory = video_maker_factory
+        self._do_script = do_script
         self._do_9x16 = do_9x16
         self._do_16x9 = do_16x9
         self._do_video = do_video
@@ -120,6 +126,10 @@ class ScriptRunWorker(QThread):
         if self._state.is_done(ordinal, "word"):
             prompts = self._prompts_from_raw(out_dir)   # word done -> reparse prompts
             self.step_status.emit(ordinal, "word", self._state.get_step(ordinal, "word"))
+        elif not self._do_script:
+            self._state.set_step(ordinal, "word", STATUS_SKIPPED)
+            self.step_status.emit(ordinal, "word", STATUS_SKIPPED)
+            prompts = (None, None)   # no story -> image steps have no prompt -> skipped
         else:
             outcome = process_script(
                 writer=writer, ordinal=ordinal, output_dir=out_dir,
@@ -182,6 +192,7 @@ class ScriptRunWorker(QThread):
         scripts = filter_by_selection(scripts, self._selection)
         for s in skipped:
             self.log.emit(f"Bỏ qua {s.path.name}: {s.reason}")
+        self.run_totals.emit(len(scripts), len(skipped))
 
         if not self._resume:
             self._state.clear()   # fresh run: skip decisions reflect only this run
@@ -198,9 +209,11 @@ class ScriptRunWorker(QThread):
             ordinal = script.ordinal
             out_dir = self._output_dir / str(ordinal)
             out_dir.mkdir(parents=True, exist_ok=True)
+            self.script_started.emit(ordinal, script.path.name)
             started = time.monotonic()
             account_name = ""
             stop_after = False
+            failed = False
             try:
                 self.step_status.emit(ordinal, "word", STATUS_RUNNING)
                 _, chatgpt_account = run_step_with_rotation(
@@ -210,6 +223,7 @@ class ScriptRunWorker(QThread):
                     log=self.log.emit,
                 )
                 account_name = chatgpt_account.display_name
+                self.account_in_use.emit(account_name)
                 # persist section-5 motion prompt for the (separate) Grok block
                 self._save_video_prompt(ordinal, out_dir)
                 self._run_video_step(ordinal, out_dir)
@@ -218,6 +232,7 @@ class ScriptRunWorker(QThread):
                 self.exhausted.emit(exc.service)
                 stop_after = True   # end the run after recording this script's row
             except Exception as exc:  # noqa: BLE001 - one script must not stop the run
+                failed = True
                 for step in ("word", "img_9x16", "img_16x9", "video"):
                     if not self._state.is_done(ordinal, step):
                         self._state.set_step(ordinal, step, STATUS_FAILED)
@@ -226,6 +241,8 @@ class ScriptRunWorker(QThread):
             finally:
                 # Always record the row, including the script that hit exhaustion.
                 self._write_report_row(report, script, account_name, started)
+            if not stop_after:
+                self.script_finished.emit(ordinal, "failed" if failed else "done")
             if stop_after:
                 break
         report.save()
