@@ -82,6 +82,10 @@ class BrowserSession:
             base_seconds=self.retry_backoff_base_seconds,
         )
 
+    def screenshot(self, path: str) -> None:
+        """Save a full-page screenshot to `path` (best effort, for error capture)."""
+        self.page.screenshot(path=str(path), full_page=True)
+
     def wait_for(self, selector: str, timeout_ms: int | None = None) -> Locator:
         """Wait until a selector is present; return its first locator."""
         self.page.wait_for_selector(selector, timeout=self._timeout(timeout_ms))

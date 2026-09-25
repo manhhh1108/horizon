@@ -122,6 +122,20 @@ def test_all_session_expired_raises_exhausted(tmp_path):
         assert mgr.get(acc.id).status == STATUS_SESSION_EXPIRED
 
 
+def test_on_error_hook_called_before_close(tmp_path):
+    mgr = make_mgr(tmp_path, 1)
+    captured = {}
+    def on_error(worker):
+        captured["worker"] = worker
+    with pytest.raises(RuntimeError):
+        run_step_with_rotation(
+            service=SERVICE_CHATGPT, account_manager=mgr,
+            make_worker=lambda acc: FakeWorker(acc),
+            do_step=lambda w: (_ for _ in ()).throw(RuntimeError("boom")),
+            on_error=on_error)
+    assert "worker" in captured           # hook fired with the live worker
+
+
 def test_log_callback_invoked_on_quota_switch(tmp_path):
     mgr = make_mgr(tmp_path, 2)
     logs: list[str] = []

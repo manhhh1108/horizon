@@ -359,6 +359,34 @@ def test_conflict_timestamp_uses_suffixed_folder(qtbot, tmp_path):
     assert w.wait(2000)
 
 
+def test_unknown_error_captures_screenshot(qtbot, tmp_path):
+    app = QCoreApplication.instance() or QCoreApplication([])
+    (tmp_path / "in").mkdir()
+    (tmp_path / "in" / "1.txt").write_text("k", encoding="utf-8")
+    mgr = _mgr(tmp_path)
+    shots = []
+
+    class ShotSession(FakeSession):
+        def screenshot(self, path):
+            shots.append(path)
+            Path(path).write_bytes(b"PNG")
+
+    class BoomWriter:
+        def __init__(self): self.session = ShotSession()
+        def write_script(self, *a, **k):
+            raise RuntimeError("lỗi lạ")
+        def render_image(self, *a, **k):
+            from horizon_tool.automation.chatgpt import ImageRenderResult
+            return ImageRenderResult(status=STATUS_DONE)
+
+    w = _worker(tmp_path, mgr, writer_factory=lambda acc: BoomWriter(), do_video=False)
+    with qtbot.waitSignal(w.done, timeout=5000):
+        w.start()
+    assert shots and shots[0].endswith("error.png")
+    assert (tmp_path / "out" / "1" / "error.png").exists()
+    assert w.wait(2000)
+
+
 def test_exhaustion_does_not_emit_script_finished(qtbot, tmp_path):
     app = QCoreApplication.instance() or QCoreApplication([])
     (tmp_path / "in").mkdir()

@@ -95,6 +95,13 @@ def test_goto_retries_through_session(tmp_path):
     assert calls["n"] == 2   # failed once, retried, succeeded
 
 
+def test_screenshot_writes_file(session, tmp_path):
+    session.page.set_content("<h1>error state</h1>")
+    dest = tmp_path / "error.png"
+    session.screenshot(str(dest))
+    assert dest.exists() and dest.stat().st_size > 0
+
+
 def test_goto_exhausts_and_raises(tmp_path):
     s = BrowserSession(tmp_path / "profile", headless=True,
                        retry_attempts=2, retry_backoff_base_seconds=0)

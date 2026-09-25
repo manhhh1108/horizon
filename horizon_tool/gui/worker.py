@@ -198,6 +198,16 @@ class ScriptRunWorker(QThread):
             return factory(account)
         return make
 
+    def _screenshot_error(self, worker, out_dir) -> None:
+        """Best-effort browser screenshot into the script's output folder."""
+        session = getattr(worker, "session", None)
+        if session is not None and hasattr(session, "screenshot"):
+            try:
+                session.screenshot(str(Path(out_dir) / "error.png"))
+                self.log.emit(f"Đã lưu ảnh màn hình lỗi: {out_dir}/error.png")
+            except Exception:  # noqa: BLE001 - screenshot capture must not mask the real error
+                pass
+
     # ----- main loop ------------------------------------------------------
     def run(self) -> None:  # noqa: D401 - QThread entry point
         scripts, skipped = scan_input_folder(self._input_dir)
@@ -255,6 +265,7 @@ class ScriptRunWorker(QThread):
                         make_worker=self._tracking_factory(self._writer_factory),
                         do_step=lambda w: self._chatgpt_block(w, script, out_dir),
                         log=self.log.emit,
+                        on_error=lambda w: self._screenshot_error(w, out_dir),
                     )
                     account_name = chatgpt_account.display_name
                 # persist section-5 motion prompt for the (separate) Grok block
@@ -302,6 +313,7 @@ class ScriptRunWorker(QThread):
                 make_worker=self._tracking_factory(self._video_maker_factory),
                 do_step=lambda m: self._grok_block(m, ordinal, out_dir),
                 log=self.log.emit,
+                on_error=lambda m: self._screenshot_error(m, out_dir),
             )
         except AllAccountsExhausted:
             raise

@@ -21,7 +21,8 @@ def _close(worker: Any) -> None:
 def run_step_with_rotation(*, service: str, account_manager: AccountManager,
                            make_worker: Callable[[Any], Any],
                            do_step: Callable[[Any], Any],
-                           log: Callable[[str], None] | None = None):
+                           log: Callable[[str], None] | None = None,
+                           on_error: Callable[[Any], None] | None = None):
     """Run do_step(worker) with rotation; return (result, account).
 
     Picks an available account, marks it in-use, builds a worker via
@@ -29,8 +30,9 @@ def run_step_with_rotation(*, service: str, account_manager: AccountManager,
     marked quota_exhausted, and on SessionExpired it is marked session_expired
     (with a re-login prompt logged); either way the next available account is
     tried, and when none remain, AllAccountsExhausted is raised. Any other
-    error frees the account (back to ready) and propagates. The worker's
-    session is closed after every attempt.
+    (unknown) error invokes `on_error(worker)` (best-effort, e.g. an error
+    screenshot) before the account is freed (back to ready) and the error
+    propagates. The worker's session is closed after every attempt.
     """
     while True:
         account = account_manager.next_available(service)
@@ -55,6 +57,11 @@ def run_step_with_rotation(*, service: str, account_manager: AccountManager,
                     f"hãy đăng nhập lại. Đang chuyển tài khoản khác.")
             continue
         except Exception:
+            if on_error is not None:
+                try:
+                    on_error(worker)
+                except Exception:  # noqa: BLE001 - error capture must not mask the real error
+                    pass
             account_manager.set_status(account.id, STATUS_READY)
             raise
         else:
