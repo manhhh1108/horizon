@@ -18,6 +18,11 @@ class StateStore:
 
     Layout: {"scripts": {"<ordinal>": {"steps": {...}, "meta": {...}}}}.
     Every mutation persists immediately so a crash mid-run is resumable.
+
+    Single-writer assumption: one StateStore instance is mutated from a single
+    thread (the run worker). It is not safe to write from two threads at once —
+    a concurrent mutation during ``_save``'s ``json.dump`` could raise. The GUI
+    thread should read state only after the worker has finished, not during a run.
     """
 
     def __init__(self, path: Path) -> None:

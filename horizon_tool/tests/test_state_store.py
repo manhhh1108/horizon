@@ -44,7 +44,7 @@ def test_atomic_save_no_temp_left(tmp_path):
     path = tmp_path / "s.json"
     StateStore(path).set_step(1, "word", STATUS_DONE)
     assert path.exists()
-    assert not (tmp_path / "run_state.json.tmp").exists()
+    assert not (tmp_path / "s.json.tmp").exists()  # the real temp name
 
 
 def test_corrupt_file_starts_empty(tmp_path):
@@ -52,3 +52,20 @@ def test_corrupt_file_starts_empty(tmp_path):
     path.write_text("{not json", encoding="utf-8")
     st = StateStore(path)  # loads in __init__
     assert st.get_step(1, "word") is None
+
+
+def test_set_step_overwrites_latest_wins(tmp_path):
+    st = StateStore(tmp_path / "s.json")
+    st.set_step(1, "word", STATUS_FAILED)
+    assert not st.is_done(1, "word")
+    st.set_step(1, "word", STATUS_DONE)     # retry succeeded
+    assert st.get_step(1, "word") == STATUS_DONE
+    assert st.is_done(1, "word")
+
+
+def test_step_and_meta_names_do_not_collide(tmp_path):
+    st = StateStore(tmp_path / "s.json")
+    st.set_step(1, "conversation_url", STATUS_DONE)   # same name as a meta key
+    st.set_meta(1, "conversation_url", "https://chat/x")
+    assert st.get_step(1, "conversation_url") == STATUS_DONE
+    assert st.get_meta(1, "conversation_url") == "https://chat/x"
