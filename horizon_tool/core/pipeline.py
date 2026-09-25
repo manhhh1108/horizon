@@ -12,8 +12,8 @@ from horizon_tool.core.output_manager import output_paths, save_raw_response
 from horizon_tool.core.section_parser import parse_sections
 from horizon_tool.core.word_builder import build_document
 
-__all__ = ["ScriptWriter", "ImageWriter", "ScriptOutcome",
-           "process_script", "render_images"]
+__all__ = ["ScriptWriter", "ImageWriter", "VideoMaker", "ScriptOutcome",
+           "process_script", "render_images", "make_video"]
 
 
 class ScriptWriter(Protocol):
@@ -33,6 +33,13 @@ class ImageWriter(Protocol):
     def render_image(self, prompt: str, wrapper: str, dest_path: str): ...
 
 
+class VideoMaker(Protocol):
+    """Anything that can turn an image into a video and return a VideoResult."""
+
+    def make_video(self, image_path: str, motion_prompt: str, duration: str,
+                   quality: str, dest_path: str): ...
+
+
 @dataclass
 class ScriptOutcome:
     """Result of processing one script through the Phase-3 steps.
@@ -47,6 +54,7 @@ class ScriptOutcome:
     conversation_url: str | None = None
     image_9x16_prompt: str | None = None
     thumbnail_16x9_prompt: str | None = None
+    video_prompt: str | None = None
 
 
 def process_script(*, writer: ScriptWriter, ordinal: int, output_dir: Path,
@@ -72,6 +80,7 @@ def process_script(*, writer: ScriptWriter, ordinal: int, output_dir: Path,
         conversation_url=result.conversation_url,
         image_9x16_prompt=parsed.sections.get("image_9x16"),
         thumbnail_16x9_prompt=parsed.sections.get("thumbnail_16x9"),
+        video_prompt=parsed.sections.get("video_prompt"),
     )
 
 
@@ -103,3 +112,24 @@ def render_images(*, writer: ImageWriter, output_dir: Path, ordinal: int,
         except Exception:  # noqa: BLE001 - one image must not stop the other
             results[key] = STATUS_FAILED
     return results
+
+
+def make_video(*, maker: VideoMaker, output_dir: Path, ordinal: int, config: dict,
+               motion_prompt: str | None, duration: str, quality: str,
+               image_path: str | None, do_video: bool = True) -> str:
+    """Render the video from the 9:16 image, returning a step status.
+
+    SKIPPED when disabled or the 9:16 image is missing. A config
+    `grok.motion_prompt_override` (if non-empty) replaces the section-5 prompt.
+    Refusal → REJECTED, render error → FAILED (both no retry); any other error
+    → FAILED. Never raises.
+    """
+    if not do_video or not image_path:
+        return STATUS_SKIPPED
+    override = config.get("grok", {}).get("motion_prompt_override", "")
+    prompt = override or (motion_prompt or "")
+    dest = str(output_paths(output_dir, ordinal)["video"])
+    try:
+        return maker.make_video(image_path, prompt, duration, quality, dest).status
+    except Exception:  # noqa: BLE001 - a video failure must not stop the run
+        return STATUS_FAILED

@@ -31,6 +31,13 @@ patterns:
     - "I can't help with that"
     - "against.*content policy"
     - "unable to generate this image"
+  video_error:
+    # Keep these specific: a bare "try again" would also match the
+    # quota_exhausted "try again later" and misclassify a quota case.
+    - "something went wrong"
+    - "failed to generate"
+    - "render failed"
+    - "unable to create the video"
   session_expired:
     - "log in"
     - "session expired"
