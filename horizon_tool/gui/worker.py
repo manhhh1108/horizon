@@ -16,8 +16,10 @@ from horizon_tool.core.state_store import StateStore
 from horizon_tool.core.rotation import run_step_with_rotation
 from horizon_tool.core.exceptions import AllAccountsExhausted
 from horizon_tool.core.statuses import (
-    STATUS_RUNNING, STATUS_DONE, STATUS_FAILED, STATUS_REJECTED, STATUS_SKIPPED,
+    STATUS_PENDING, STATUS_RUNNING, STATUS_DONE, STATUS_FAILED, STATUS_REJECTED,
+    STATUS_SKIPPED,
 )
+from horizon_tool.core.logging_setup import setup_session_logger
 
 
 class PipelineWorker(QThread):
@@ -163,6 +165,7 @@ class ScriptRunWorker(QThread):
             if not enabled or not prompt:
                 status = STATUS_SKIPPED
             else:
+                self.step_status.emit(ordinal, key, STATUS_RUNNING)
                 dest = str(output_paths(out_dir, ordinal)[key])
                 status = writer.render_image(prompt, wrapper, dest).status  # may raise QuotaExhausted
             self._state.set_step(ordinal, key, status)
@@ -211,14 +214,32 @@ class ScriptRunWorker(QThread):
 
     # ----- main loop ------------------------------------------------------
     def run(self) -> None:  # noqa: D401 - QThread entry point
+        # OUT-05: persist every live log line to a per-session log.txt in the
+        # output folder. The GUI pane keeps its own connection to `log`.
+        logger = setup_session_logger(self._output_dir / "log.txt")
+        self.log.connect(logger.info)
+
         scripts, skipped = scan_input_folder(self._input_dir)
         scripts = filter_by_selection(scripts, self._selection)
         for s in skipped:
             self.log.emit(f"Bỏ qua {s.path.name}: {s.reason}")
         self.run_totals.emit(len(scripts), len(skipped))
+        self.log.emit(f"Bắt đầu chạy: {len(scripts)} kịch bản, bỏ qua {len(skipped)} tệp.")
 
         if not self._resume:
             self._state.clear()   # fresh run: skip decisions reflect only this run
+
+        # Pre-populate the whole queue so every script is visible up front:
+        # enabled steps as "Chờ" (pending), disabled steps as "Bỏ qua". Each
+        # cell is overwritten with its real status as the script is processed
+        # (on resume, already-terminal steps re-emit their stored status).
+        enabled = {"word": self._do_script, "img_9x16": self._do_9x16,
+                   "img_16x9": self._do_16x9, "video": self._do_video}
+        for script in scripts:
+            self.script_started.emit(script.ordinal, script.path.name)
+            for step, on in enabled.items():
+                self.step_status.emit(script.ordinal, step,
+                                      STATUS_PENDING if on else STATUS_SKIPPED)
 
         report = ReportWriter(self._output_dir / "report.xlsx")
         for script in scripts:
@@ -243,15 +264,16 @@ class ScriptRunWorker(QThread):
                     self._output_dir, ordinal, self._conflict_policy,
                     suffix=self._run_timestamp or None)
                 if out_dir is None:  # SKIP policy + folder exists
-                    self.script_started.emit(ordinal, script.path.name)
-                    self.step_status.emit(ordinal, "word", STATUS_SKIPPED)
+                    # The script is never touched again -> clear every column off
+                    # the pre-populated "Chờ" so none is left dangling.
+                    for step in ("word", "img_9x16", "img_16x9", "video"):
+                        self.step_status.emit(ordinal, step, STATUS_SKIPPED)
                     self.log.emit(
                         f"Bỏ qua kịch bản {ordinal}: thư mục output đã tồn tại.")
                     self.script_finished.emit(ordinal, STATUS_SKIPPED)
                     self._write_report_row(report, script, "", started)  # audit row
                     continue
                 self._state.set_meta(ordinal, "out_dir", str(out_dir))  # for resume
-            self.script_started.emit(ordinal, script.path.name)
             account_name = ""
             stop_after = False
             try:
@@ -273,6 +295,11 @@ class ScriptRunWorker(QThread):
                 self._save_video_prompt(ordinal, out_dir)
                 self._run_video_step(ordinal, out_dir)
             except AllAccountsExhausted as exc:
+                # The run pauses here; any step caught mid-flight must not stay on
+                # "Đang chạy" — revert unfinished steps to "Chờ" so Resume redoes them.
+                for step in ("word", "img_9x16", "img_16x9", "video"):
+                    if not self._state.is_done(ordinal, step):
+                        self.step_status.emit(ordinal, step, STATUS_PENDING)
                 self.log.emit(f"Hết tài khoản {exc.service} — tạm dừng, đã lưu trạng thái.")
                 self.exhausted.emit(exc.service)
                 stop_after = True   # end the run after recording this script's row
@@ -308,6 +335,7 @@ class ScriptRunWorker(QThread):
             if self._do_video and not have_9x16:
                 self.log.emit(f"Kịch bản {ordinal}: không có ảnh 9:16 — bỏ qua video.")
             return
+        self.step_status.emit(ordinal, "video", STATUS_RUNNING)
         try:
             _, _ = run_step_with_rotation(
                 service="grok", account_manager=self._accounts,

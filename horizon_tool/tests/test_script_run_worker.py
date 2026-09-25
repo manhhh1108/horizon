@@ -11,7 +11,9 @@ from horizon_tool.core.exceptions import QuotaExhausted  # noqa: E402
 from horizon_tool.core.account_manager import (  # noqa: E402
     AccountManager, SERVICE_CHATGPT, SERVICE_GROK, STATUS_QUOTA,
 )
-from horizon_tool.core.statuses import STATUS_DONE, STATUS_FAILED, STATUS_SKIPPED  # noqa: E402
+from horizon_tool.core.statuses import (  # noqa: E402
+    STATUS_DONE, STATUS_FAILED, STATUS_SKIPPED, STATUS_PENDING, STATUS_RUNNING,
+)
 
 SELECTORS_PATH = Path(__file__).resolve().parents[1] / "config" / "selectors.yaml"
 FULL = """FULL STORY\n\nCHAPTER ONE — X\n\nBody. **twist.**\n\nKEY SCENES + CONTINUITY NOTE\n\ns\n\nIMAGE PROMPT — 9:16\n\ni\n\nTHUMBNAIL PROMPT — 16:9\n\nt\n\nVIDEO AI PROMPT\n\nSHOT 1 — 3s\n\nFACEBOOK TITLE\n\na. b.\n\nFACEBOOK VIDEO DESCRIPTION\n\nd\n\nSTORY TEASER\n\nte\n\nHASHTAGS\n\n#a #b\n"""
@@ -80,6 +82,55 @@ def test_full_pipeline_produces_all_outputs(qtbot, tmp_path):
     assert w.wait(2000)
 
 
+def test_all_steps_show_pending_then_running(qtbot, tmp_path):
+    # Every enabled step must be shown as "Chờ" (pending) up front and pass
+    # through "Đang chạy" (running) before its final status — spec §6.
+    app = QCoreApplication.instance() or QCoreApplication([])
+    (tmp_path / "in").mkdir()
+    (tmp_path / "in" / "1.txt").write_text("k", encoding="utf-8")
+    mgr = _mgr(tmp_path)
+    statuses = []
+    w = _worker(tmp_path, mgr)
+    w.step_status.connect(lambda o, s, st: statuses.append((o, s, st)))
+    with qtbot.waitSignal(w.done, timeout=5000):
+        w.start()
+    for step in ("word", "img_9x16", "img_16x9", "video"):
+        assert (1, step, STATUS_PENDING) in statuses, f"{step} never shown as Chờ"
+        assert (1, step, STATUS_RUNNING) in statuses, f"{step} never shown as Đang chạy"
+    assert w.wait(2000)
+
+
+def test_disabled_step_prepopulated_as_skipped(qtbot, tmp_path):
+    # A step turned off in the GUI shows "Bỏ qua" from the start, not "Chờ".
+    app = QCoreApplication.instance() or QCoreApplication([])
+    (tmp_path / "in").mkdir()
+    (tmp_path / "in" / "1.txt").write_text("k", encoding="utf-8")
+    mgr = _mgr(tmp_path)
+    statuses = []
+    w = _worker(tmp_path, mgr, do_video=False)
+    w.step_status.connect(lambda o, s, st: statuses.append((o, s, st)))
+    with qtbot.waitSignal(w.done, timeout=5000):
+        w.start()
+    assert (1, "video", STATUS_PENDING) not in statuses
+    assert (1, "video", STATUS_SKIPPED) in statuses
+    assert w.wait(2000)
+
+
+def test_session_log_file_written(qtbot, tmp_path):
+    # OUT-05: a per-session log.txt is written to the output folder and captures
+    # the live log lines.
+    app = QCoreApplication.instance() or QCoreApplication([])
+    (tmp_path / "in").mkdir()
+    (tmp_path / "in" / "1.txt").write_text("k", encoding="utf-8")
+    mgr = _mgr(tmp_path)
+    w = _worker(tmp_path, mgr)
+    with qtbot.waitSignal(w.done, timeout=5000):
+        w.start()
+    log_path = tmp_path / "out" / "log.txt"
+    assert log_path.exists() and log_path.stat().st_size > 0
+    assert w.wait(2000)
+
+
 def test_quota_rotates_to_second_account(qtbot, tmp_path):
     app = QCoreApplication.instance() or QCoreApplication([])
     (tmp_path / "in").mkdir()
@@ -115,13 +166,18 @@ def test_all_exhausted_emits_and_stops(qtbot, tmp_path):
         def __init__(self): self.session = FakeSession()
         def write_script(self, *a, **k): raise QuotaExhausted("chatgpt")
         def render_image(self, *a, **k): return ImageRenderResult(status=STATUS_DONE)
-    events = []
+    events, statuses = [], []
     w = _worker(tmp_path, mgr, writer_factory=lambda acc: AlwaysQuota(),
                 video_maker_factory=None)
     w.exhausted.connect(events.append)
+    w.step_status.connect(lambda o, s, st: statuses.append((o, s, st)))
     with qtbot.waitSignal(w.done, timeout=5000):
         w.start()
     assert events == ["chatgpt"]
+    # The word step went RUNNING then hit exhaustion -> must revert to "Chờ",
+    # never left dangling on "Đang chạy" while the run is paused.
+    last_word = [st for (o, s, st) in statuses if s == "word"][-1]
+    assert last_word == STATUS_PENDING
     assert w.wait(2000)
 
 
@@ -333,14 +389,20 @@ def test_conflict_skip_skips_existing_folder(qtbot, tmp_path):
         def write_script(self, *a, **k):
             calls["n"] += 1
             return super().write_script(*a, **k)
-    finished = []
+    finished, statuses = [], []
     w = _worker(tmp_path, mgr, writer_factory=lambda acc: CountWriter(),
                 conflict_policy=SKIP)
     w.script_finished.connect(lambda o, st: finished.append((o, st)))
+    w.step_status.connect(lambda o, s, st: statuses.append((o, s, st)))
     with qtbot.waitSignal(w.done, timeout=5000):
         w.start()
     assert calls["n"] == 0                       # never processed
     assert finished == [(1, STATUS_SKIPPED)]
+    # Every column must end on "Bỏ qua" — none left dangling on the pre-pop "Chờ".
+    for step in ("word", "img_9x16", "img_16x9", "video"):
+        assert (1, step, STATUS_SKIPPED) in statuses
+    last = {s: st for (o, s, st) in statuses}
+    assert all(last[s] == STATUS_SKIPPED for s in ("word", "img_9x16", "img_16x9", "video"))
     assert w.wait(2000)
 
 
