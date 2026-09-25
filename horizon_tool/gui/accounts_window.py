@@ -31,9 +31,11 @@ _LOGIN_URLS = {
 class AccountsWindow(QDialog):
     """Dialog for managing ChatGPT and Grok accounts."""
 
-    def __init__(self, manager: AccountManager, parent=None) -> None:
+    def __init__(self, manager: AccountManager, parent=None,
+                 config: dict | None = None) -> None:
         super().__init__(parent)
         self.manager = manager
+        self._config = config or {}
         self.setWindowTitle("Quản lý tài khoản")
         self.resize(720, 560)
         self.tables: dict[str, QTableWidget] = {}
@@ -149,9 +151,14 @@ class AccountsWindow(QDialog):
         account = self.manager.get(account_id)
         url = _LOGIN_URLS[service]
 
+        retry_cfg = self._config.get("retry", {})
+
         def factory():
             # Headful so the user can log in; profile persists the session.
-            return BrowserSession(account.profile_dir, headless=False)
+            return BrowserSession(
+                account.profile_dir, headless=False,
+                retry_attempts=int(retry_cfg.get("max_attempts", 3)),
+                retry_backoff_base_seconds=float(retry_cfg.get("backoff_base_seconds", 5)))
 
         self._login_worker = LoginWorker(url, factory, parent=self)
         self._login_worker.opened.connect(

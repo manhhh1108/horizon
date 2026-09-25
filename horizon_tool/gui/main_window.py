@@ -302,15 +302,22 @@ class MainWindow(QMainWindow):
             "VIDEO_QUALITY": self.quality_combo.currentText()})
 
         el_ms = self.config.raw.get("timeouts", {}).get("element_wait_seconds", 30) * 1000
+        retry_cfg = self.config.raw.get("retry", {})
+        retry_attempts = int(retry_cfg.get("max_attempts", 3))
+        retry_backoff = float(retry_cfg.get("backoff_base_seconds", 5))
 
         def writer_factory(account):
-            session = BrowserSession(account.profile_dir, headless=False, element_timeout_ms=el_ms)
+            session = BrowserSession(
+                account.profile_dir, headless=False, element_timeout_ms=el_ms,
+                retry_attempts=retry_attempts, retry_backoff_base_seconds=retry_backoff)
             session.start()
             return ChatGPTWriter(session, selectors, self.config.raw)
 
         def video_maker_factory(account):
             from horizon_tool.automation.grok import GrokVideoMaker
-            session = BrowserSession(account.profile_dir, headless=False, element_timeout_ms=el_ms)
+            session = BrowserSession(
+                account.profile_dir, headless=False, element_timeout_ms=el_ms,
+                retry_attempts=retry_attempts, retry_backoff_base_seconds=retry_backoff)
             session.start()
             return GrokVideoMaker(session, selectors, self.config.raw)
 
@@ -457,7 +464,8 @@ class MainWindow(QMainWindow):
     def open_accounts_window(self) -> None:
         """Open (or re-show) the accounts management window."""
         if self.accounts_window is None:
-            self.accounts_window = AccountsWindow(self.account_manager, self)
+            self.accounts_window = AccountsWindow(
+                self.account_manager, self, config=self.config.raw)
         self.accounts_window.show()
         self.accounts_window.raise_()
 
