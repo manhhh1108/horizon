@@ -74,3 +74,42 @@ def test_page_property_raises_before_start(tmp_path):
 def test_close_without_start_is_safe(tmp_path):
     s = BrowserSession(tmp_path / "profile", headless=True)
     s.close()  # must not raise even though start() was never called
+
+
+def test_goto_retries_through_session(tmp_path):
+    # goto threads retry_attempts/backoff through retry_with_backoff. Inject a
+    # fake page + base=0 so there's no real browser and no real sleep.
+    s = BrowserSession(tmp_path / "profile", headless=True,
+                       retry_attempts=3, retry_backoff_base_seconds=0)
+    calls = {"n": 0}
+
+    class FakePage:
+        def goto(self, url, timeout=None):
+            calls["n"] += 1
+            if calls["n"] < 2:
+                raise RuntimeError("mạng lỗi")
+            return None
+
+    s._page = FakePage()   # bypass start(); goto() uses self.page
+    s.goto("https://example/")
+    assert calls["n"] == 2   # failed once, retried, succeeded
+
+
+def test_screenshot_writes_file(session, tmp_path):
+    session.page.set_content("<h1>error state</h1>")
+    dest = tmp_path / "error.png"
+    session.screenshot(str(dest))
+    assert dest.exists() and dest.stat().st_size > 0
+
+
+def test_goto_exhausts_and_raises(tmp_path):
+    s = BrowserSession(tmp_path / "profile", headless=True,
+                       retry_attempts=2, retry_backoff_base_seconds=0)
+
+    class FakePage:
+        def goto(self, url, timeout=None):
+            raise RuntimeError("down")
+
+    s._page = FakePage()
+    with pytest.raises(RuntimeError):
+        s.goto("https://example/")

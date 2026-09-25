@@ -38,9 +38,17 @@ patterns:
     - "failed to generate"
     - "render failed"
     - "unable to create the video"
+  # NOTE: these patterns are matched against the assistant response text, which
+  # for a script IS the (long) story — keep them specific so ordinary story
+  # wording never trips them (a bare "log in" would). Ideally, when tuning
+  # against the live site, point these at a login/error banner element instead
+  # of the message body (same applies to quota_exhausted / policy_refusal).
   session_expired:
-    - "log in"
-    - "session expired"
+    - "please log in"
+    - "log in to continue"
+    - "sign in to continue"
+    - "you(’|')?ve been logged out"
+    - "session (has )?expired"
 
 # Section heading regexes (matched on a stripped line, IGNORECASE).
 # Order = canonical section order (1..9).

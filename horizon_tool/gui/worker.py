@@ -8,7 +8,9 @@ from PySide6.QtCore import QThread, Signal
 
 from horizon_tool.core.input_reader import scan_input_folder, filter_by_selection, read_script_content
 from horizon_tool.core.pipeline import process_script, make_video
-from horizon_tool.core.output_manager import output_paths
+from horizon_tool.core.output_manager import (
+    output_paths, prepare_output_dir, OVERWRITE, SKIP, TIMESTAMP,
+)
 from horizon_tool.core.report import ReportWriter
 from horizon_tool.core.state_store import StateStore
 from horizon_tool.core.rotation import run_step_with_rotation
@@ -80,6 +82,7 @@ class ScriptRunWorker(QThread):
                  video_duration: str = "", video_quality: str = "",
                  plugin_name: str = "", plugin_hash: str = "",
                  state_path: str | None = None, resume: bool = False,
+                 conflict_policy: str = OVERWRITE, run_timestamp: str = "",
                  config: dict | None = None, parent=None) -> None:
         super().__init__(parent)
         self._input_dir = Path(input_dir)
@@ -99,6 +102,8 @@ class ScriptRunWorker(QThread):
         self._plugin_name = plugin_name
         self._plugin_hash = plugin_hash
         self._resume = resume
+        self._conflict_policy = conflict_policy
+        self._run_timestamp = run_timestamp
         self._config = config or {}
         self._state = StateStore(Path(state_path) if state_path
                                  else self._output_dir / "run_state.json")
@@ -193,6 +198,17 @@ class ScriptRunWorker(QThread):
             return factory(account)
         return make
 
+    def _screenshot_error(self, worker, out_dir) -> None:
+        """Best-effort browser screenshot into the script's output folder."""
+        session = getattr(worker, "session", None)
+        if session is not None and hasattr(session, "screenshot"):
+            dest = Path(out_dir) / "error.png"
+            try:
+                session.screenshot(str(dest))
+                self.log.emit(f"Đã lưu ảnh màn hình lỗi: {dest}")
+            except Exception:  # noqa: BLE001 - screenshot capture must not mask the real error
+                pass
+
     # ----- main loop ------------------------------------------------------
     def run(self) -> None:  # noqa: D401 - QThread entry point
         scripts, skipped = scan_input_folder(self._input_dir)
@@ -214,10 +230,28 @@ class ScriptRunWorker(QThread):
             if self._stop:
                 break
             ordinal = script.ordinal
-            out_dir = self._output_dir / str(ordinal)
-            out_dir.mkdir(parents=True, exist_ok=True)
-            self.script_started.emit(ordinal, script.path.name)
             started = time.monotonic()
+            stored = self._state.get_meta(ordinal, "out_dir") if self._resume else None
+            if stored:
+                # Resume reuses the exact folder this script wrote to before
+                # (e.g. a TIMESTAMP-suffixed dir), so raw_response.txt is read
+                # back from the right place regardless of the current policy.
+                out_dir = Path(stored)
+                out_dir.mkdir(parents=True, exist_ok=True)
+            else:
+                out_dir = prepare_output_dir(
+                    self._output_dir, ordinal, self._conflict_policy,
+                    suffix=self._run_timestamp or None)
+                if out_dir is None:  # SKIP policy + folder exists
+                    self.script_started.emit(ordinal, script.path.name)
+                    self.step_status.emit(ordinal, "word", STATUS_SKIPPED)
+                    self.log.emit(
+                        f"Bỏ qua kịch bản {ordinal}: thư mục output đã tồn tại.")
+                    self.script_finished.emit(ordinal, STATUS_SKIPPED)
+                    self._write_report_row(report, script, "", started)  # audit row
+                    continue
+                self._state.set_meta(ordinal, "out_dir", str(out_dir))  # for resume
+            self.script_started.emit(ordinal, script.path.name)
             account_name = ""
             stop_after = False
             try:
@@ -232,6 +266,7 @@ class ScriptRunWorker(QThread):
                         make_worker=self._tracking_factory(self._writer_factory),
                         do_step=lambda w: self._chatgpt_block(w, script, out_dir),
                         log=self.log.emit,
+                        on_error=lambda w: self._screenshot_error(w, out_dir),
                     )
                     account_name = chatgpt_account.display_name
                 # persist section-5 motion prompt for the (separate) Grok block
@@ -279,6 +314,7 @@ class ScriptRunWorker(QThread):
                 make_worker=self._tracking_factory(self._video_maker_factory),
                 do_step=lambda m: self._grok_block(m, ordinal, out_dir),
                 log=self.log.emit,
+                on_error=lambda m: self._screenshot_error(m, out_dir),
             )
         except AllAccountsExhausted:
             raise

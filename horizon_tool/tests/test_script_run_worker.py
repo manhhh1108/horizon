@@ -283,6 +283,125 @@ def test_video_only_failure_counts_script_as_failed(qtbot, tmp_path):
     assert w.wait(2000)
 
 
+def test_resume_reuses_timestamp_output_dir(qtbot, tmp_path):
+    # TIMESTAMP fresh run writes to 1_TS; a later Resume must reuse 1_TS (not
+    # fall back to the base "1" folder) so it reads/writes the right files.
+    from horizon_tool.core.output_manager import TIMESTAMP
+    app = QCoreApplication.instance() or QCoreApplication([])
+    (tmp_path / "in").mkdir()
+    (tmp_path / "in" / "1.txt").write_text("k", encoding="utf-8")
+    (tmp_path / "out" / "1").mkdir(parents=True)   # forces TIMESTAMP -> 1_TS
+    mgr = _mgr(tmp_path)
+    phase = {"resume": False}
+
+    class Writer:
+        def __init__(self): self.session = FakeSession()
+        def write_script(self, *a, **k): return ScriptResult(raw_text=FULL)
+        def render_image(self, prompt, wrapper, dest_path):
+            if not phase["resume"]:
+                raise RuntimeError("ảnh lỗi lần đầu")   # fresh run: images FAIL
+            Path(dest_path).write_bytes(b"PNG")
+            return ImageRenderResult(status=STATUS_DONE, path=dest_path)
+
+    w1 = _worker(tmp_path, mgr, writer_factory=lambda acc: Writer(),
+                 do_video=False, conflict_policy=TIMESTAMP, run_timestamp="TS")
+    with qtbot.waitSignal(w1.done, timeout=5000):
+        w1.start()
+    assert w1.wait(2000)
+    ts_dir = tmp_path / "out" / "1_TS"
+    assert (ts_dir / "1.docx").exists()          # fresh work went to the suffixed dir
+
+    phase["resume"] = True
+    w2 = _worker(tmp_path, mgr, writer_factory=lambda acc: Writer(),
+                 do_video=False, resume=True)
+    with qtbot.waitSignal(w2.done, timeout=5000):
+        w2.start()
+    assert w2.wait(2000)
+    assert (ts_dir / "1_9x16.png").exists()                    # resume reused 1_TS
+    assert not (tmp_path / "out" / "1" / "1_9x16.png").exists()  # not the base dir
+
+
+def test_conflict_skip_skips_existing_folder(qtbot, tmp_path):
+    from horizon_tool.core.output_manager import SKIP
+    app = QCoreApplication.instance() or QCoreApplication([])
+    (tmp_path / "in").mkdir()
+    (tmp_path / "in" / "1.txt").write_text("k", encoding="utf-8")
+    (tmp_path / "out" / "1").mkdir(parents=True)   # pre-existing conflict
+    mgr = _mgr(tmp_path)
+    calls = {"n": 0}
+    class CountWriter(FakeWriter):
+        def write_script(self, *a, **k):
+            calls["n"] += 1
+            return super().write_script(*a, **k)
+    finished = []
+    w = _worker(tmp_path, mgr, writer_factory=lambda acc: CountWriter(),
+                conflict_policy=SKIP)
+    w.script_finished.connect(lambda o, st: finished.append((o, st)))
+    with qtbot.waitSignal(w.done, timeout=5000):
+        w.start()
+    assert calls["n"] == 0                       # never processed
+    assert finished == [(1, STATUS_SKIPPED)]
+    assert w.wait(2000)
+
+
+def test_conflict_timestamp_uses_suffixed_folder(qtbot, tmp_path):
+    from horizon_tool.core.output_manager import TIMESTAMP
+    app = QCoreApplication.instance() or QCoreApplication([])
+    (tmp_path / "in").mkdir()
+    (tmp_path / "in" / "1.txt").write_text("k", encoding="utf-8")
+    (tmp_path / "out" / "1").mkdir(parents=True)   # conflict -> use 1_<ts>
+    mgr = _mgr(tmp_path)
+    w = _worker(tmp_path, mgr, do_video=False,
+                conflict_policy=TIMESTAMP, run_timestamp="20260925_101500")
+    with qtbot.waitSignal(w.done, timeout=5000):
+        w.start()
+    assert (tmp_path / "out" / "1_20260925_101500" / "1.docx").exists()
+    assert w.wait(2000)
+
+
+def test_unknown_error_captures_screenshot(qtbot, tmp_path):
+    # An unknown error on script 1 must: screenshot into that script's folder,
+    # mark the step FAILED, report the script as failed, AND still process the
+    # next script (one failure never stops the run) — spec §12.
+    app = QCoreApplication.instance() or QCoreApplication([])
+    (tmp_path / "in").mkdir()
+    (tmp_path / "in" / "1.txt").write_text("k", encoding="utf-8")
+    (tmp_path / "in" / "2.txt").write_text("k", encoding="utf-8")
+    mgr = _mgr(tmp_path)
+    shots = []
+
+    class ShotSession(FakeSession):
+        def screenshot(self, path):
+            shots.append(path)
+            Path(path).write_bytes(b"PNG")
+
+    class BoomThenOk(FakeWriter):
+        """Raise an unknown error on script 1, succeed on script 2."""
+        def __init__(self): self.session = ShotSession()
+        def write_script(self, *a, **k):
+            if not BoomThenOk.first_used:
+                BoomThenOk.first_used = True
+                raise RuntimeError("lỗi lạ")
+            return ScriptResult(raw_text=FULL)
+    BoomThenOk.first_used = False
+
+    statuses, finished = [], []
+    w = _worker(tmp_path, mgr, writer_factory=lambda acc: BoomThenOk(), do_video=False)
+    w.step_status.connect(lambda o, s, st: statuses.append((o, s, st)))
+    w.script_finished.connect(lambda o, r: finished.append((o, r)))
+    with qtbot.waitSignal(w.done, timeout=5000):
+        w.start()
+    # script 1: screenshotted, marked failed, reported failed
+    assert shots and shots[0].endswith("error.png")
+    assert (tmp_path / "out" / "1" / "error.png").exists()
+    assert (1, "word", STATUS_FAILED) in statuses
+    assert (1, STATUS_FAILED) in finished
+    # script 2 still ran to completion -> run did not stop after the failure
+    assert (tmp_path / "out" / "2" / "2.docx").exists()
+    assert (2, STATUS_DONE) in finished
+    assert w.wait(2000)
+
+
 def test_exhaustion_does_not_emit_script_finished(qtbot, tmp_path):
     app = QCoreApplication.instance() or QCoreApplication([])
     (tmp_path / "in").mkdir()

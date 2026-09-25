@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from horizon_tool.automation.browser import BrowserSession
-from horizon_tool.core.exceptions import QuotaExhausted
+from horizon_tool.core.exceptions import QuotaExhausted, SessionExpired
 from horizon_tool.core.section_parser import merge_continue_parts
 from horizon_tool.core.statuses import STATUS_DONE, STATUS_FAILED, STATUS_REJECTED
 
@@ -33,6 +33,11 @@ def detect_refusal(response_text: str, refusal_patterns: list[str]) -> bool:
 def detect_quota(response_text: str, quota_patterns: list[str]) -> bool:
     """True if the response matches any quota-exhausted pattern (case-insensitive)."""
     return _any_match(response_text, quota_patterns)
+
+
+def detect_session_expired(response_text: str, patterns: list[str]) -> bool:
+    """True if the page text matches any session-expired pattern (logged out)."""
+    return _any_match(response_text, patterns)
 
 
 @dataclass
@@ -142,6 +147,8 @@ class ChatGPTWriter:
         self.session.wait_for(sel["assistant_message"])
         loc = self.session.page.locator(sel["assistant_message"]).last
         text = loc.inner_text()
+        if detect_session_expired(text, self.selectors["patterns"]["session_expired"]):
+            raise SessionExpired("chatgpt", text)
         if detect_quota(text, self.selectors["patterns"]["quota_exhausted"]):
             raise QuotaExhausted("chatgpt", text)
         return text

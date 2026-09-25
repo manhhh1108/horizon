@@ -216,6 +216,28 @@ def test_open_settings_window(qtbot, tmp_path, monkeypatch):
     assert opened == {"ok": True}
 
 
+def test_existing_output_ordinals_detects_conflicts(qtbot, tmp_path):
+    app = QApplication.instance() or QApplication([])
+    win = MainWindow(AppConfig.load(CONFIG))
+    qtbot.addWidget(win)
+    (tmp_path / "in").mkdir()
+    (tmp_path / "in" / "1.txt").write_text("a", encoding="utf-8")
+    (tmp_path / "in" / "2.txt").write_text("b", encoding="utf-8")
+    (tmp_path / "out" / "1").mkdir(parents=True)   # only #1 conflicts
+    got = win._existing_output_ordinals(str(tmp_path / "in"), str(tmp_path / "out"), "")
+    assert got == [1]
+
+
+def test_script_finished_counts_skipped(qtbot):
+    from horizon_tool.core.statuses import STATUS_SKIPPED
+    app = QApplication.instance() or QApplication([])
+    win = MainWindow(AppConfig.load(CONFIG))
+    qtbot.addWidget(win)
+    win._reset_stats()
+    win._on_script_finished(1, STATUS_SKIPPED)
+    assert "Bỏ qua: 1" in win.stats_label.text()
+
+
 def test_preview_plugin_reads_selected(qtbot, tmp_path, monkeypatch):
     import horizon_tool.gui.main_window as mw
     monkeypatch.setattr(mw, "STATE_DIR", tmp_path / "state")
@@ -228,3 +250,40 @@ def test_preview_plugin_reads_selected(qtbot, tmp_path, monkeypatch):
     win.plugin_combo.addItem("v11.txt", userData=str(p))
     win.plugin_combo.setCurrentText("v11.txt")
     assert win._selected_plugin_text() == "NỘI DUNG PLUGIN"
+
+
+def test_edit_plugin_rejects_docx(qtbot, tmp_path, monkeypatch):
+    import horizon_tool.gui.main_window as mw
+    monkeypatch.setattr(mw, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(mw, "PROFILES_DIR", tmp_path / "profiles")
+    app = QApplication.instance() or QApplication([])
+    win = mw.MainWindow(AppConfig.load(CONFIG))
+    qtbot.addWidget(win)
+    p = tmp_path / "v11.docx"
+    p.write_bytes(b"x")
+    win.plugin_combo.addItem("v11.docx", userData=str(p))
+    win.plugin_combo.setCurrentText("v11.docx")
+    shown = {}
+    import PySide6.QtWidgets as W
+    monkeypatch.setattr(W.QMessageBox, "information",
+                        lambda *a, **k: shown.setdefault("msg", True))
+    win.edit_selected_plugin()
+    assert shown.get("msg") is True   # docx -> guided to Word, editor not opened
+
+
+def test_edit_plugin_opens_editor_for_txt(qtbot, tmp_path, monkeypatch):
+    import horizon_tool.gui.main_window as mw
+    import horizon_tool.gui.plugin_editor as pe
+    monkeypatch.setattr(mw, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(mw, "PROFILES_DIR", tmp_path / "profiles")
+    app = QApplication.instance() or QApplication([])
+    win = mw.MainWindow(AppConfig.load(CONFIG))
+    qtbot.addWidget(win)
+    p = tmp_path / "v11.txt"
+    p.write_text("nội dung", encoding="utf-8")
+    win.plugin_combo.addItem("v11.txt", userData=str(p))
+    win.plugin_combo.setCurrentText("v11.txt")
+    # Simulate the user clicking Save (truthy exec) without a real modal.
+    monkeypatch.setattr(pe.PluginEditorDialog, "exec", lambda self: 1)
+    win.edit_selected_plugin()
+    assert "Đã lưu plugin" in win.log_pane.toPlainText()   # editor opened + accepted
