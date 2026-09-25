@@ -110,6 +110,18 @@ def test_session_expired_marks_and_switches(tmp_path):
     assert account.id == a2.id
 
 
+def test_all_session_expired_raises_exhausted(tmp_path):
+    from horizon_tool.core.account_manager import STATUS_SESSION_EXPIRED
+    mgr = make_mgr(tmp_path, 2)
+    with pytest.raises(AllAccountsExhausted):
+        run_step_with_rotation(
+            service=SERVICE_CHATGPT, account_manager=mgr,
+            make_worker=lambda acc: FakeWorker(acc),
+            do_step=lambda w: (_ for _ in ()).throw(SessionExpired("chatgpt")))
+    for acc in mgr.list(SERVICE_CHATGPT):
+        assert mgr.get(acc.id).status == STATUS_SESSION_EXPIRED
+
+
 def test_log_callback_invoked_on_quota_switch(tmp_path):
     mgr = make_mgr(tmp_path, 2)
     logs: list[str] = []
