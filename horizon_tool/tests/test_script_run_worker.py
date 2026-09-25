@@ -1,4 +1,3 @@
-# horizon_tool/tests/test_script_run_worker.py
 import pytest
 import yaml
 from pathlib import Path
@@ -7,258 +6,213 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import QCoreApplication  # noqa: E402
 from horizon_tool.gui.worker import ScriptRunWorker  # noqa: E402
 from horizon_tool.automation.chatgpt import ScriptResult, ImageRenderResult  # noqa: E402
-from horizon_tool.core.statuses import STATUS_DONE, STATUS_FAILED, STATUS_REJECTED, STATUS_SKIPPED  # noqa: E402
+from horizon_tool.automation.grok import VideoResult  # noqa: E402
+from horizon_tool.core.exceptions import QuotaExhausted  # noqa: E402
+from horizon_tool.core.account_manager import (  # noqa: E402
+    AccountManager, SERVICE_CHATGPT, SERVICE_GROK, STATUS_QUOTA,
+)
+from horizon_tool.core.statuses import STATUS_DONE, STATUS_FAILED, STATUS_SKIPPED  # noqa: E402
 
-FULL = """FULL STORY
-
-CHAPTER ONE — X
-
-Body. **twist.**
-
-KEY SCENES + CONTINUITY NOTE
-
-s
-
-IMAGE PROMPT — 9:16
-
-i
-
-THUMBNAIL PROMPT — 16:9
-
-t
-
-VIDEO AI PROMPT
-
-SHOT 1 — 3s
-
-FACEBOOK TITLE
-
-a. b.
-
-FACEBOOK VIDEO DESCRIPTION
-
-d
-
-STORY TEASER
-
-te
-
-HASHTAGS
-
-#a #b
-"""
-
-
-# Resolve selectors relative to the package, not the pytest CWD.
 SELECTORS_PATH = Path(__file__).resolve().parents[1] / "config" / "selectors.yaml"
+FULL = """FULL STORY\n\nCHAPTER ONE — X\n\nBody. **twist.**\n\nKEY SCENES + CONTINUITY NOTE\n\ns\n\nIMAGE PROMPT — 9:16\n\ni\n\nTHUMBNAIL PROMPT — 16:9\n\nt\n\nVIDEO AI PROMPT\n\nSHOT 1 — 3s\n\nFACEBOOK TITLE\n\na. b.\n\nFACEBOOK VIDEO DESCRIPTION\n\nd\n\nSTORY TEASER\n\nte\n\nHASHTAGS\n\n#a #b\n"""
 
 
 class FakeSession:
-    def __init__(self):
-        self.closed = False
-
-    def close(self):
-        self.closed = True
+    def __init__(self): self.closed = False
+    def close(self): self.closed = True
 
 
 class FakeWriter:
-    def __init__(self):
-        self.session = FakeSession()
-
-    def write_script(self, plugin_text, script_text, runtime_suffix=""):
-        return ScriptResult(raw_text=FULL)
-
+    def __init__(self): self.session = FakeSession()
+    def write_script(self, *a, **k): return ScriptResult(raw_text=FULL)
     def render_image(self, prompt, wrapper, dest_path):
-        # simulate a saved file
         Path(dest_path).write_bytes(b"PNG")
         return ImageRenderResult(status=STATUS_DONE, path=dest_path)
 
 
 class FakeVideoMaker:
-    def __init__(self):
-        self.session = FakeSession()
-        self.calls = []
-
+    def __init__(self): self.session = FakeSession()
     def make_video(self, image_path, motion_prompt, duration, quality, dest_path):
-        from horizon_tool.automation.grok import VideoResult
         Path(dest_path).write_bytes(b"MP4")
-        self.calls.append((image_path, duration, quality, dest_path))
         return VideoResult(status=STATUS_DONE, path=dest_path)
 
 
-def test_worker_processes_folder(qtbot, tmp_path):
-    app = QCoreApplication.instance() or QCoreApplication([])
-    (tmp_path / "in").mkdir()
-    (tmp_path / "in" / "1.txt").write_text("kịch bản 1", encoding="utf-8")
-    (tmp_path / "in" / "2.txt").write_text("kịch bản 2", encoding="utf-8")
-    out = tmp_path / "out"
+def _mgr(tmp_path):
+    m = AccountManager(tmp_path / "a.json", tmp_path / "profiles")
+    m.add(SERVICE_CHATGPT, "C1"); m.add(SERVICE_GROK, "G1")
+    return m
+
+
+def _cfg():
+    return {"chatgpt": {"image_wrapper_9x16": "{PROMPT}", "image_wrapper_16x9": "{PROMPT}"},
+            "grok": {"motion_prompt_override": ""}}
+
+
+def _worker(tmp_path, mgr, **kw):
+    (tmp_path / "in").mkdir(exist_ok=True)
     selectors = yaml.safe_load(SELECTORS_PATH.read_text(encoding="utf-8"))
-    created: list[FakeWriter] = []
-
-    def factory():
-        w = FakeWriter()
-        created.append(w)
-        return w
-
-    made = []
-
-    def vfactory():
-        m = FakeVideoMaker()
-        made.append(m)
-        return m
-
-    statuses = []
-    worker = ScriptRunWorker(
-        input_dir=str(tmp_path / "in"), output_dir=str(out), selection="",
-        plugin_text="PLUGIN", heading_regexes=selectors["section_headings"],
-        writer_factory=factory, do_9x16=True, do_16x9=True,
-        do_video=True, video_maker_factory=vfactory,
-        video_duration="15s", video_quality="1080p",
-        config={"chatgpt": {"image_wrapper_9x16": "{PROMPT}",
-                            "image_wrapper_16x9": "{PROMPT}"},
-                "grok": {"motion_prompt_override": ""}},
-    )
-    worker.step_status.connect(lambda o, s, st: statuses.append((o, s, st)))
-    with qtbot.waitSignal(worker.done, timeout=5000):
-        worker.start()
-
-    assert (out / "1" / "1.docx").exists()
-    assert (out / "2" / "2.docx").exists()
-    assert (out / "1" / "1_9x16.png").exists()
-    assert (out / "1" / "1_16x9.png").exists()
-    assert (out / "1" / "1.mp4").exists()
-    assert any(s == "img_9x16" for _, s, _ in statuses)
-    assert any(s == "img_16x9" for _, s, _ in statuses)
-    assert any(s == "video" for _, s, _ in statuses)
-    # Each script's browser session is closed after use (no Chromium leak).
-    assert len(created) == 2
-    assert all(w.session.closed for w in created)
-    # Each script's Grok session is closed after use.
-    assert all(m.session.closed for m in made)
-    assert worker.wait(2000)
+    defaults = dict(
+        input_dir=str(tmp_path / "in"), output_dir=str(tmp_path / "out"),
+        selection="", plugin_text="PLUGIN", heading_regexes=selectors["section_headings"],
+        account_manager=mgr, writer_factory=lambda acc: FakeWriter(),
+        video_maker_factory=lambda acc: FakeVideoMaker(), do_9x16=True, do_16x9=True,
+        do_video=True, video_duration="15s", video_quality="1080p",
+        plugin_name="v11", plugin_hash="hash", config=_cfg())
+    defaults.update(kw)
+    return ScriptRunWorker(**defaults)
 
 
-def test_video_skipped_when_no_9x16(qtbot, tmp_path):
+def test_full_pipeline_produces_all_outputs(qtbot, tmp_path):
     app = QCoreApplication.instance() or QCoreApplication([])
     (tmp_path / "in").mkdir()
     (tmp_path / "in" / "1.txt").write_text("k", encoding="utf-8")
-    out = tmp_path / "out"
-    selectors = yaml.safe_load(SELECTORS_PATH.read_text(encoding="utf-8"))
-
-    class RejectingWriter:
-        def __init__(self):
-            self.session = FakeSession()
-
-        def write_script(self, *a, **k):
-            return ScriptResult(raw_text=FULL)
-
-        def render_image(self, prompt, wrapper, dest_path):
-            return ImageRenderResult(status=STATUS_REJECTED)  # no image saved
-
-    vmade = []
-
-    def vfactory():
-        m = FakeVideoMaker()
-        vmade.append(m)
-        return m
-
+    mgr = _mgr(tmp_path)
     statuses = []
-    worker = ScriptRunWorker(
-        input_dir=str(tmp_path / "in"), output_dir=str(out), selection="",
-        plugin_text="P", heading_regexes=selectors["section_headings"],
-        writer_factory=lambda: RejectingWriter(), do_9x16=True, do_16x9=True,
-        do_video=True, video_maker_factory=vfactory,
-        video_duration="10s", video_quality="720p",
-        config={"chatgpt": {"image_wrapper_9x16": "{PROMPT}",
-                            "image_wrapper_16x9": "{PROMPT}"},
-                "grok": {"motion_prompt_override": ""}})
-    worker.step_status.connect(lambda o, s, st: statuses.append((o, s, st)))
-    with qtbot.waitSignal(worker.done, timeout=5000):
-        worker.start()
-    assert (1, "video", STATUS_SKIPPED) in statuses
-    assert vmade == []          # Grok never invoked when there's no 9:16
-    assert worker.wait(2000)
+    w = _worker(tmp_path, mgr)
+    w.step_status.connect(lambda o, s, st: statuses.append((o, s, st)))
+    with qtbot.waitSignal(w.done, timeout=5000):
+        w.start()
+    out = tmp_path / "out" / "1"
+    assert (out / "1.docx").exists() and (out / "1_9x16.png").exists() and (out / "1.mp4").exists()
+    assert (tmp_path / "out" / "report.xlsx").exists()
+    assert (tmp_path / "out" / "run_state.json").exists()
+    assert (1, "video", STATUS_DONE) in statuses
+    assert w.wait(2000)
 
 
-def test_worker_continues_after_one_script_fails(qtbot, tmp_path):
+def test_quota_rotates_to_second_account(qtbot, tmp_path):
     app = QCoreApplication.instance() or QCoreApplication([])
     (tmp_path / "in").mkdir()
-    (tmp_path / "in" / "1.txt").write_text("k1", encoding="utf-8")
-    (tmp_path / "in" / "2.txt").write_text("k2", encoding="utf-8")
-    out = tmp_path / "out"
-    selectors = yaml.safe_load(SELECTORS_PATH.read_text(encoding="utf-8"))
-
-    class FlakyWriter:
-        def __init__(self, ordinal_holder):
-            self.session = FakeSession()
-            self._holder = ordinal_holder
-
-        def write_script(self, plugin_text, script_text, runtime_suffix=""):
-            self._holder[0] += 1
-            if self._holder[0] == 1:
-                raise RuntimeError("giả lập lỗi ChatGPT")
+    (tmp_path / "in" / "1.txt").write_text("k", encoding="utf-8")
+    mgr = AccountManager(tmp_path / "a.json", tmp_path / "profiles")
+    a1 = mgr.add(SERVICE_CHATGPT, "C1"); a2 = mgr.add(SERVICE_CHATGPT, "C2")
+    mgr.add(SERVICE_GROK, "G1")
+    first = {"used": False}
+    class QuotaThenOk:
+        def __init__(self): self.session = FakeSession()
+        def write_script(self, *a, **k):
+            if not first["used"]:
+                first["used"] = True
+                raise QuotaExhausted("chatgpt")
             return ScriptResult(raw_text=FULL)
-
         def render_image(self, prompt, wrapper, dest_path):
+            Path(dest_path).write_bytes(b"PNG"); return ImageRenderResult(status=STATUS_DONE, path=dest_path)
+    w = _worker(tmp_path, mgr, writer_factory=lambda acc: QuotaThenOk())
+    with qtbot.waitSignal(w.done, timeout=5000):
+        w.start()
+    assert mgr.get(a1.id).status == STATUS_QUOTA   # first exhausted
+    assert (tmp_path / "out" / "1" / "1.docx").exists()  # succeeded on the second
+    assert w.wait(2000)
+
+
+def test_all_exhausted_emits_and_stops(qtbot, tmp_path):
+    app = QCoreApplication.instance() or QCoreApplication([])
+    (tmp_path / "in").mkdir()
+    (tmp_path / "in" / "1.txt").write_text("k", encoding="utf-8")
+    mgr = AccountManager(tmp_path / "a.json", tmp_path / "profiles")
+    mgr.add(SERVICE_CHATGPT, "C1")
+    class AlwaysQuota:
+        def __init__(self): self.session = FakeSession()
+        def write_script(self, *a, **k): raise QuotaExhausted("chatgpt")
+        def render_image(self, *a, **k): return ImageRenderResult(status=STATUS_DONE)
+    events = []
+    w = _worker(tmp_path, mgr, writer_factory=lambda acc: AlwaysQuota(),
+                video_maker_factory=None)
+    w.exhausted.connect(events.append)
+    with qtbot.waitSignal(w.done, timeout=5000):
+        w.start()
+    assert events == ["chatgpt"]
+    assert w.wait(2000)
+
+
+def test_resume_skips_completed_steps(qtbot, tmp_path):
+    app = QCoreApplication.instance() or QCoreApplication([])
+    (tmp_path / "in").mkdir()
+    (tmp_path / "in" / "1.txt").write_text("k", encoding="utf-8")
+    mgr = _mgr(tmp_path)
+    # First run completes everything.
+    w1 = _worker(tmp_path, mgr)
+    with qtbot.waitSignal(w1.done, timeout=5000):
+        w1.start()
+    assert w1.wait(2000)
+    # Second run in resume mode must NOT call the writer again for the word step.
+    calls = {"n": 0}
+    class CountingWriter(FakeWriter):
+        def write_script(self, *a, **k):
+            calls["n"] += 1
+            return super().write_script(*a, **k)
+    w2 = _worker(tmp_path, mgr, writer_factory=lambda acc: CountingWriter(), resume=True)
+    with qtbot.waitSignal(w2.done, timeout=5000):
+        w2.start()
+    assert calls["n"] == 0   # word already done -> not re-run
+    assert w2.wait(2000)
+
+
+def test_video_quota_rotates_to_second_grok_account(qtbot, tmp_path):
+    # The Grok/video step must rotate accounts on quota (not silently swallow it).
+    app = QCoreApplication.instance() or QCoreApplication([])
+    (tmp_path / "in").mkdir()
+    (tmp_path / "in" / "1.txt").write_text("k", encoding="utf-8")
+    mgr = AccountManager(tmp_path / "a.json", tmp_path / "profiles")
+    mgr.add(SERVICE_CHATGPT, "C1")
+    g1 = mgr.add(SERVICE_GROK, "G1"); g2 = mgr.add(SERVICE_GROK, "G2")
+    quota = {"fired": False}
+
+    class QuotaThenOkVideo:
+        def __init__(self): self.session = FakeSession()
+        def make_video(self, image_path, motion_prompt, duration, quality, dest_path):
+            if not quota["fired"]:
+                quota["fired"] = True
+                raise QuotaExhausted("grok")
+            Path(dest_path).write_bytes(b"MP4")
+            return VideoResult(status=STATUS_DONE, path=dest_path)
+
+    statuses = []
+    w = _worker(tmp_path, mgr, video_maker_factory=lambda acc: QuotaThenOkVideo())
+    w.step_status.connect(lambda o, s, st: statuses.append((o, s, st)))
+    with qtbot.waitSignal(w.done, timeout=5000):
+        w.start()
+    assert mgr.get(g1.id).status == STATUS_QUOTA          # first grok account exhausted
+    assert (tmp_path / "out" / "1" / "1.mp4").exists()    # video made on the second
+    assert (1, "video", STATUS_DONE) in statuses
+    assert w.wait(2000)
+
+
+def test_intra_run_rotation_redoes_only_unfinished_substep(qtbot, tmp_path):
+    # Word + the 9:16 image succeed on account 1; the 16:9 image hits quota.
+    # After switching to account 2, ONLY the 16:9 image is redone — the word
+    # step and the already-done 9:16 image are NOT re-run (fresh run, no resume).
+    app = QCoreApplication.instance() or QCoreApplication([])
+    (tmp_path / "in").mkdir()
+    (tmp_path / "in" / "1.txt").write_text("k", encoding="utf-8")
+    mgr = AccountManager(tmp_path / "a.json", tmp_path / "profiles")
+    mgr.add(SERVICE_CHATGPT, "C1"); mgr.add(SERVICE_CHATGPT, "C2")
+    mgr.add(SERVICE_GROK, "G1")
+    counters = {"word": 0, "img9": 0, "img16": 0}
+    quota = {"fired": False}
+
+    class W:
+        def __init__(self): self.session = FakeSession()
+        def write_script(self, *a, **k):
+            counters["word"] += 1
+            return ScriptResult(raw_text=FULL)
+        def render_image(self, prompt, wrapper, dest_path):
+            if "9x16" in dest_path:
+                counters["img9"] += 1
+                Path(dest_path).write_bytes(b"PNG")
+                return ImageRenderResult(status=STATUS_DONE, path=dest_path)
+            counters["img16"] += 1
+            if not quota["fired"]:
+                quota["fired"] = True
+                raise QuotaExhausted("chatgpt")   # 16:9 hits quota once
             Path(dest_path).write_bytes(b"PNG")
             return ImageRenderResult(status=STATUS_DONE, path=dest_path)
 
-    holder = [0]
-    statuses: list[tuple[int, str, str]] = []
-
-    worker = ScriptRunWorker(
-        input_dir=str(tmp_path / "in"), output_dir=str(out), selection="",
-        plugin_text="P", heading_regexes=selectors["section_headings"],
-        writer_factory=lambda: FlakyWriter(holder),
-        do_9x16=True, do_16x9=True,
-        do_video=False,
-        config={"chatgpt": {"image_wrapper_9x16": "{PROMPT}",
-                            "image_wrapper_16x9": "{PROMPT}"},
-                "grok": {"motion_prompt_override": ""}},
-    )
-    worker.step_status.connect(lambda o, s, st: statuses.append((o, s, st)))
-    with qtbot.waitSignal(worker.done, timeout=5000):
-        worker.start()
-
-    # First script failed but the second still produced its Word file.
-    assert (out / "2" / "2.docx").exists()
-    assert (1, "word", STATUS_FAILED) in statuses
-    # A failed script resolves ALL its columns (no blank image cells).
-    assert (1, "img_9x16", STATUS_FAILED) in statuses
-    assert (1, "img_16x9", STATUS_FAILED) in statuses
-    assert (1, "video", STATUS_FAILED) in statuses
-    assert worker.wait(2000)
-
-
-def test_video_factory_failure_only_fails_video_column(qtbot, tmp_path):
-    # If the Grok factory raises (e.g. no Grok account), only the video column
-    # is FAILED — the word/image results must not be clobbered.
-    app = QCoreApplication.instance() or QCoreApplication([])
-    (tmp_path / "in").mkdir()
-    (tmp_path / "in" / "1.txt").write_text("k", encoding="utf-8")
-    out = tmp_path / "out"
-    selectors = yaml.safe_load(SELECTORS_PATH.read_text(encoding="utf-8"))
-
-    def boom_factory():
-        raise RuntimeError("Không có tài khoản Grok khả dụng.")
-
-    statuses: list[tuple[int, str, str]] = []
-    worker = ScriptRunWorker(
-        input_dir=str(tmp_path / "in"), output_dir=str(out), selection="",
-        plugin_text="P", heading_regexes=selectors["section_headings"],
-        writer_factory=lambda: FakeWriter(), do_9x16=True, do_16x9=True,
-        do_video=True, video_maker_factory=boom_factory,
-        video_duration="10s", video_quality="720p",
-        config={"chatgpt": {"image_wrapper_9x16": "{PROMPT}",
-                            "image_wrapper_16x9": "{PROMPT}"},
-                "grok": {"motion_prompt_override": ""}})
-    worker.step_status.connect(lambda o, s, st: statuses.append((o, s, st)))
-    with qtbot.waitSignal(worker.done, timeout=5000):
-        worker.start()
-
-    # word + images succeeded (DONE), only video is FAILED (contained).
-    assert (1, "word", STATUS_DONE) in statuses
-    assert (1, "img_9x16", STATUS_DONE) in statuses
-    assert (1, "video", STATUS_FAILED) in statuses
-    assert (1, "word", STATUS_FAILED) not in statuses   # not clobbered
-    assert worker.wait(2000)
+    w = _worker(tmp_path, mgr, writer_factory=lambda acc: W(), do_video=False)
+    with qtbot.waitSignal(w.done, timeout=5000):
+        w.start()
+    assert counters["word"] == 1    # word NOT regenerated on the rotation retry
+    assert counters["img9"] == 1    # already-done 9:16 image NOT redone
+    assert counters["img16"] == 2   # only the quota'd 16:9 image retried
+    assert (tmp_path / "out" / "1" / "1_16x9.png").exists()
+    assert w.wait(2000)

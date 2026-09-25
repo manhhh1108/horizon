@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
+from horizon_tool.core.exceptions import QuotaExhausted
 from horizon_tool.core.statuses import (
     STATUS_DONE, STATUS_FAILED, STATUS_SKIPPED, STATUS_REJECTED,
 )
@@ -109,6 +110,8 @@ def render_images(*, writer: ImageWriter, output_dir: Path, ordinal: int,
             continue
         try:
             results[key] = writer.render_image(prompt, wrapper, dest).status
+        except QuotaExhausted:
+            raise  # let the rotation layer switch accounts (never swallow quota)
         except Exception:  # noqa: BLE001 - one image must not stop the other
             results[key] = STATUS_FAILED
     return results
@@ -122,7 +125,8 @@ def make_video(*, maker: VideoMaker, output_dir: Path, ordinal: int, config: dic
     SKIPPED when disabled or the 9:16 image is missing. A config
     `grok.motion_prompt_override` (if non-empty) replaces the section-5 prompt.
     Refusal → REJECTED, render error → FAILED (both no retry); any other error
-    → FAILED. Never raises.
+    → FAILED. QuotaExhausted is re-raised so the rotation layer can switch Grok
+    accounts (it is never swallowed here).
     """
     if not do_video or not image_path:
         return STATUS_SKIPPED
@@ -131,5 +135,7 @@ def make_video(*, maker: VideoMaker, output_dir: Path, ordinal: int, config: dic
     dest = str(output_paths(output_dir, ordinal)["video"])
     try:
         return maker.make_video(image_path, prompt, duration, quality, dest).status
+    except QuotaExhausted:
+        raise  # let the rotation layer switch accounts (never swallow quota)
     except Exception:  # noqa: BLE001 - a video failure must not stop the run
         return STATUS_FAILED

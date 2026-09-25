@@ -10,7 +10,8 @@ from dataclasses import dataclass
 from typing import Callable
 
 from horizon_tool.automation.browser import BrowserSession
-from horizon_tool.automation.chatgpt import detect_refusal
+from horizon_tool.automation.chatgpt import detect_refusal, detect_quota
+from horizon_tool.core.exceptions import QuotaExhausted
 from horizon_tool.core.statuses import STATUS_DONE, STATUS_FAILED, STATUS_REJECTED
 
 
@@ -97,7 +98,12 @@ class GrokVideoMaker:
         # refusal or render error can be detected. Returns that text.
         timeout_ms = int(self.config.get("grok", {}).get("render_timeout_seconds", 600)) * 1000
         self.session.wait_for(self.selectors["grok"]["video_result"], timeout_ms=timeout_ms)
-        return ""
+        status_text = ""  # placeholder — the real status read lands with live tuning
+        # NOTE: with status_text == "" this quota check is inert; it becomes live
+        # once _wait_and_read_status returns the real Grok status text.
+        if detect_quota(status_text, self.selectors["patterns"]["quota_exhausted"]):
+            raise QuotaExhausted("grok", status_text)
+        return status_text
 
     def _download_video(self, dest_path: str) -> str:
         # TODO: kiểm tra selector thực tế — locate the rendered video and save it

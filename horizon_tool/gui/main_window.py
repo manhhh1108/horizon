@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
@@ -18,9 +18,12 @@ from PySide6.QtWidgets import (
 
 from horizon_tool.automation.browser import BrowserSession
 from horizon_tool.automation.chatgpt import ChatGPTWriter
-from horizon_tool.core.account_manager import AccountManager
+from horizon_tool.core.account_manager import AccountManager, STATUS_QUOTA, STATUS_READY
 from horizon_tool.core.config_loader import AppConfig, load_yaml
-from horizon_tool.core.plugin_manager import list_plugins, read_plugin_text, apply_variables
+from horizon_tool.core.plugin_manager import (
+    list_plugins, read_plugin_text, apply_variables,
+    plugin_hash as compute_plugin_hash,  # aliased so the kwarg name can't shadow it
+)
 from horizon_tool.gui.accounts_window import AccountsWindow
 from horizon_tool.gui.worker import PipelineWorker, ScriptRunWorker
 
@@ -42,6 +45,8 @@ class MainWindow(QMainWindow):
         self.account_manager = AccountManager(
             STATE_DIR / "accounts.json", PROFILES_DIR)
         self.accounts_window: AccountsWindow | None = None
+        self._auto_resume_timer = QTimer(self)
+        self._auto_resume_timer.timeout.connect(self._auto_resume_tick)
         self.setWindowTitle("Horizon X Media Tool")
         self.resize(1100, 720)
 
@@ -122,7 +127,7 @@ class MainWindow(QMainWindow):
         self.settings_btn = QPushButton("Cài đặt")
         self.start_btn.clicked.connect(self.on_start)
         self.pause_btn.clicked.connect(lambda: self._set_paused(True))
-        self.resume_btn.clicked.connect(lambda: self._set_paused(False))
+        self.resume_btn.clicked.connect(self.on_resume)
         self.stop_btn.clicked.connect(self.on_stop)
         self.accounts_btn.clicked.connect(self.open_accounts_window)
         for b in (self.start_btn, self.pause_btn, self.resume_btn, self.stop_btn,
@@ -166,6 +171,16 @@ class MainWindow(QMainWindow):
         self.log_pane.appendPlainText(message)
 
     def on_start(self) -> None:
+        self._launch_run(resume=False)
+
+    def on_resume(self) -> None:
+        # Resume a paused running worker, or start a fresh worker in resume mode.
+        if self.worker is not None and self.worker.isRunning():
+            self._set_paused(False)
+            return
+        self._launch_run(resume=True)
+
+    def _launch_run(self, *, resume: bool) -> None:
         if self.worker is not None and self.worker.isRunning():
             return
         input_dir = self.input_edit.text().strip()
@@ -174,54 +189,67 @@ class MainWindow(QMainWindow):
         if not input_dir or not output_dir or not plugin_path:
             self.append_log("Hãy chọn thư mục input, output và plugin trước khi chạy.")
             return
-
         selectors = load_yaml(SELECTORS_PATH)
-        plugin_text = apply_variables(
-            read_plugin_text(Path(plugin_path)),
-            {"VIDEO_DURATION": self.duration_combo.currentText(),
-             "VIDEO_QUALITY": self.quality_combo.currentText()},
-        )
+        raw_plugin = read_plugin_text(Path(plugin_path))
+        plugin_text = apply_variables(raw_plugin, {
+            "VIDEO_DURATION": self.duration_combo.currentText(),
+            "VIDEO_QUALITY": self.quality_combo.currentText()})
 
-        def writer_factory():
-            account = self.account_manager.next_available("chatgpt")
-            if account is None:
-                raise RuntimeError("Không có tài khoản ChatGPT khả dụng.")
-            session = BrowserSession(account.profile_dir, headless=False,
-                                     element_timeout_ms=self.config.raw.get("timeouts", {}).get("element_wait_seconds", 30) * 1000)
+        el_ms = self.config.raw.get("timeouts", {}).get("element_wait_seconds", 30) * 1000
+
+        def writer_factory(account):
+            session = BrowserSession(account.profile_dir, headless=False, element_timeout_ms=el_ms)
             session.start()
             return ChatGPTWriter(session, selectors, self.config.raw)
 
-        from horizon_tool.automation.grok import GrokVideoMaker
-
-        def video_maker_factory():
-            account = self.account_manager.next_available("grok")
-            if account is None:
-                raise RuntimeError("Không có tài khoản Grok khả dụng.")
-            session = BrowserSession(
-                account.profile_dir, headless=False,
-                element_timeout_ms=self.config.raw.get("timeouts", {}).get("element_wait_seconds", 30) * 1000)
+        def video_maker_factory(account):
+            from horizon_tool.automation.grok import GrokVideoMaker
+            session = BrowserSession(account.profile_dir, headless=False, element_timeout_ms=el_ms)
             session.start()
             return GrokVideoMaker(session, selectors, self.config.raw)
 
-        self.table.setRowCount(0)
+        if not resume:
+            self.table.setRowCount(0)
         self.worker = ScriptRunWorker(
             input_dir=input_dir, output_dir=output_dir,
             selection=self.range_edit.text().strip(), plugin_text=plugin_text,
-            heading_regexes=selectors["section_headings"],
-            writer_factory=writer_factory,
-            do_9x16=self.step_img_9x16.isChecked(),
-            do_16x9=self.step_thumb_16x9.isChecked(),
+            heading_regexes=selectors["section_headings"], account_manager=self.account_manager,
+            writer_factory=writer_factory, video_maker_factory=video_maker_factory,
+            do_9x16=self.step_img_9x16.isChecked(), do_16x9=self.step_thumb_16x9.isChecked(),
             do_video=self.step_video.isChecked(),
-            video_maker_factory=video_maker_factory,
             video_duration=self.duration_combo.currentText(),
             video_quality=self.quality_combo.currentText(),
-            config=self.config.raw, parent=self,
-        )
+            plugin_name=self.plugin_combo.currentText(),
+            plugin_hash=compute_plugin_hash(raw_plugin),
+            state_path=str(Path(output_dir) / "run_state.json"), resume=resume,
+            config=self.config.raw, parent=self)
         self.worker.log.connect(self.append_log)
         self.worker.step_status.connect(self._on_step_status)
+        self.worker.exhausted.connect(self._on_exhausted)
         self.worker.done.connect(self._on_worker_done)
         self._set_running_state(True)
         self.worker.start()
+
+    def _on_exhausted(self, service: str) -> None:
+        self.append_log(f"Đã hết tài khoản {service}. Nhấn Tiếp tục khi quota hồi, hoặc bật tự động Resume trong Cài đặt.")
+        auto = self.config.raw.get("auto_resume", {})
+        if auto.get("enabled"):
+            minutes = int(auto.get("check_interval_minutes", 30))
+            self._auto_resume_timer.start(max(1, minutes) * 60 * 1000)
+
+    def _auto_resume_tick(self) -> None:
+        # Re-check quota accounts: mark them ready again and resume the run.
+        if self.worker is not None and self.worker.isRunning():
+            return
+        reset = 0
+        for acc in self.account_manager.list():
+            if acc.status == STATUS_QUOTA:
+                self.account_manager.set_status(acc.id, STATUS_READY)
+                reset += 1
+        if reset:
+            self.append_log(f"Tự động Resume: đã đặt lại {reset} tài khoản hết quota.")
+            self._auto_resume_timer.stop()
+            self.on_resume()
 
     def _on_step_status(self, ordinal: int, step: str, status: str) -> None:
         """Upsert the row for `ordinal` and set the given step's column.
@@ -260,6 +288,7 @@ class MainWindow(QMainWindow):
 
     def _on_worker_done(self) -> None:
         """Runs on the GUI thread (queued signal) when the worker finishes."""
+        self._auto_resume_timer.stop()
         self._set_running_state(False)
 
     def _set_running_state(self, running: bool) -> None:
