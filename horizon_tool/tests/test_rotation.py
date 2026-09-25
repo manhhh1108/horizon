@@ -3,7 +3,7 @@ import pytest
 from horizon_tool.core.account_manager import (
     AccountManager, SERVICE_CHATGPT, STATUS_READY, STATUS_QUOTA, STATUS_IN_USE,
 )
-from horizon_tool.core.exceptions import QuotaExhausted, AllAccountsExhausted
+from horizon_tool.core.exceptions import QuotaExhausted, AllAccountsExhausted, SessionExpired
 from horizon_tool.core.rotation import run_step_with_rotation
 
 
@@ -90,6 +90,24 @@ def test_make_worker_failure_frees_account_not_stuck_in_use(tmp_path):
             make_worker=boom_factory, do_step=lambda w: "unreached")
     assert mgr.get(a1.id).status == STATUS_READY
     assert mgr.get(a1.id).status != STATUS_IN_USE
+
+
+def test_session_expired_marks_and_switches(tmp_path):
+    from horizon_tool.core.account_manager import STATUS_SESSION_EXPIRED
+    mgr = make_mgr(tmp_path, 2)
+    a1, a2 = mgr.list(SERVICE_CHATGPT)
+    calls = {"n": 0}
+    def do_step(w):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise SessionExpired("chatgpt")
+        return "OK"
+    result, account = run_step_with_rotation(
+        service=SERVICE_CHATGPT, account_manager=mgr,
+        make_worker=lambda acc: FakeWorker(acc), do_step=do_step)
+    assert result == "OK"
+    assert mgr.get(a1.id).status == STATUS_SESSION_EXPIRED
+    assert account.id == a2.id
 
 
 def test_log_callback_invoked_on_quota_switch(tmp_path):

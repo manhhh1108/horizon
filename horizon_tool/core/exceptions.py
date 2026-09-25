@@ -10,6 +10,14 @@ class QuotaExhausted(Exception):
         self.service = service
 
 
+class SessionExpired(Exception):
+    """Raised when a service account's login session has expired."""
+
+    def __init__(self, service: str = "", message: str = "") -> None:
+        super().__init__(message or f"Session expired for service: {service!r}")
+        self.service = service
+
+
 class AllAccountsExhausted(Exception):
     """Raised when no enabled account of a service has quota left."""
 

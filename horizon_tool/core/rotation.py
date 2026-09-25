@@ -4,9 +4,9 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from horizon_tool.core.account_manager import (
-    AccountManager, STATUS_IN_USE, STATUS_QUOTA, STATUS_READY,
+    AccountManager, STATUS_IN_USE, STATUS_QUOTA, STATUS_READY, STATUS_SESSION_EXPIRED,
 )
-from horizon_tool.core.exceptions import AllAccountsExhausted, QuotaExhausted
+from horizon_tool.core.exceptions import AllAccountsExhausted, QuotaExhausted, SessionExpired
 
 
 def _close(worker: Any) -> None:
@@ -26,10 +26,11 @@ def run_step_with_rotation(*, service: str, account_manager: AccountManager,
 
     Picks an available account, marks it in-use, builds a worker via
     make_worker(account) and runs do_step. On QuotaExhausted the account is
-    marked quota_exhausted and the next available account is tried; when none
-    remain, AllAccountsExhausted is raised. Any other error frees the account
-    (back to ready) and propagates. The worker's session is closed after every
-    attempt.
+    marked quota_exhausted, and on SessionExpired it is marked session_expired
+    (with a re-login prompt logged); either way the next available account is
+    tried, and when none remain, AllAccountsExhausted is raised. Any other
+    error frees the account (back to ready) and propagates. The worker's
+    session is closed after every attempt.
     """
     while True:
         account = account_manager.next_available(service)
@@ -46,6 +47,12 @@ def run_step_with_rotation(*, service: str, account_manager: AccountManager,
             account_manager.set_status(account.id, STATUS_QUOTA)
             if log:
                 log(f"Tài khoản '{account.display_name}' hết quota — chuyển tài khoản khác.")
+            continue
+        except SessionExpired:
+            account_manager.set_status(account.id, STATUS_SESSION_EXPIRED)
+            if log:
+                log(f"Tài khoản '{account.display_name}': phiên đăng nhập hết hạn — "
+                    f"hãy đăng nhập lại. Đang chuyển tài khoản khác.")
             continue
         except Exception:
             account_manager.set_status(account.id, STATUS_READY)
