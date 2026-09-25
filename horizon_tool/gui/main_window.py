@@ -25,7 +25,7 @@ from horizon_tool.core.config_loader import AppConfig, load_yaml
 from horizon_tool.core.input_reader import scan_input_folder, filter_by_selection
 from horizon_tool.core.output_manager import OVERWRITE, SKIP, TIMESTAMP
 from horizon_tool.core.plugin_manager import (
-    list_plugins, read_plugin_text, apply_variables,
+    list_plugins, read_plugin_text, apply_variables, EDITABLE_SUFFIXES,
     plugin_hash as compute_plugin_hash,  # aliased so the kwarg name can't shadow it
 )
 from horizon_tool.gui.accounts_window import AccountsWindow
@@ -211,7 +211,7 @@ class MainWindow(QMainWindow):
         if not path:
             self.append_log("Chưa chọn plugin để sửa.")
             return
-        if Path(path).suffix.lower() not in {".txt", ".md"}:
+        if Path(path).suffix.lower() not in EDITABLE_SUFFIXES:
             QMessageBox.information(
                 self, "Sửa plugin",
                 "Chỉ sửa được .txt/.md trong tool. Với .docx hãy dùng 'Mở file' (Word).")

@@ -269,3 +269,21 @@ def test_edit_plugin_rejects_docx(qtbot, tmp_path, monkeypatch):
                         lambda *a, **k: shown.setdefault("msg", True))
     win.edit_selected_plugin()
     assert shown.get("msg") is True   # docx -> guided to Word, editor not opened
+
+
+def test_edit_plugin_opens_editor_for_txt(qtbot, tmp_path, monkeypatch):
+    import horizon_tool.gui.main_window as mw
+    import horizon_tool.gui.plugin_editor as pe
+    monkeypatch.setattr(mw, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(mw, "PROFILES_DIR", tmp_path / "profiles")
+    app = QApplication.instance() or QApplication([])
+    win = mw.MainWindow(AppConfig.load(CONFIG))
+    qtbot.addWidget(win)
+    p = tmp_path / "v11.txt"
+    p.write_text("nội dung", encoding="utf-8")
+    win.plugin_combo.addItem("v11.txt", userData=str(p))
+    win.plugin_combo.setCurrentText("v11.txt")
+    # Simulate the user clicking Save (truthy exec) without a real modal.
+    monkeypatch.setattr(pe.PluginEditorDialog, "exec", lambda self: 1)
+    win.edit_selected_plugin()
+    assert "Đã lưu plugin" in win.log_pane.toPlainText()   # editor opened + accepted

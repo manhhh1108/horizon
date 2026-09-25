@@ -103,7 +103,8 @@ def backup_plugin(path: Path) -> Path | None:
         return None
     history = path.parent / HISTORY_DIRNAME
     history.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # Microseconds so two saves in the same second don't overwrite each other.
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     backup = history / f"{path.stem}.{stamp}{path.suffix}"
     shutil.copy2(path, backup)
     return backup
