@@ -8,7 +8,9 @@ from PySide6.QtCore import QThread, Signal
 
 from horizon_tool.core.input_reader import scan_input_folder, filter_by_selection, read_script_content
 from horizon_tool.core.pipeline import process_script, make_video
-from horizon_tool.core.output_manager import output_paths
+from horizon_tool.core.output_manager import (
+    output_paths, prepare_output_dir, OVERWRITE, SKIP, TIMESTAMP,
+)
 from horizon_tool.core.report import ReportWriter
 from horizon_tool.core.state_store import StateStore
 from horizon_tool.core.rotation import run_step_with_rotation
@@ -80,6 +82,7 @@ class ScriptRunWorker(QThread):
                  video_duration: str = "", video_quality: str = "",
                  plugin_name: str = "", plugin_hash: str = "",
                  state_path: str | None = None, resume: bool = False,
+                 conflict_policy: str = OVERWRITE, run_timestamp: str = "",
                  config: dict | None = None, parent=None) -> None:
         super().__init__(parent)
         self._input_dir = Path(input_dir)
@@ -99,6 +102,8 @@ class ScriptRunWorker(QThread):
         self._plugin_name = plugin_name
         self._plugin_hash = plugin_hash
         self._resume = resume
+        self._conflict_policy = conflict_policy
+        self._run_timestamp = run_timestamp
         self._config = config or {}
         self._state = StateStore(Path(state_path) if state_path
                                  else self._output_dir / "run_state.json")
@@ -214,8 +219,15 @@ class ScriptRunWorker(QThread):
             if self._stop:
                 break
             ordinal = script.ordinal
-            out_dir = self._output_dir / str(ordinal)
-            out_dir.mkdir(parents=True, exist_ok=True)
+            out_dir = prepare_output_dir(
+                self._output_dir, ordinal, self._conflict_policy,
+                suffix=self._run_timestamp or None)
+            if out_dir is None:  # SKIP policy + folder exists
+                self.script_started.emit(ordinal, script.path.name)
+                self.step_status.emit(ordinal, "word", STATUS_SKIPPED)
+                self.log.emit(f"Bỏ qua kịch bản {ordinal}: thư mục output đã tồn tại.")
+                self.script_finished.emit(ordinal, STATUS_SKIPPED)
+                continue
             self.script_started.emit(ordinal, script.path.name)
             started = time.monotonic()
             account_name = ""

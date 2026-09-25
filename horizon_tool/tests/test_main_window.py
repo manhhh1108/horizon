@@ -216,6 +216,28 @@ def test_open_settings_window(qtbot, tmp_path, monkeypatch):
     assert opened == {"ok": True}
 
 
+def test_existing_output_ordinals_detects_conflicts(qtbot, tmp_path):
+    app = QApplication.instance() or QApplication([])
+    win = MainWindow(AppConfig.load(CONFIG))
+    qtbot.addWidget(win)
+    (tmp_path / "in").mkdir()
+    (tmp_path / "in" / "1.txt").write_text("a", encoding="utf-8")
+    (tmp_path / "in" / "2.txt").write_text("b", encoding="utf-8")
+    (tmp_path / "out" / "1").mkdir(parents=True)   # only #1 conflicts
+    got = win._existing_output_ordinals(str(tmp_path / "in"), str(tmp_path / "out"), "")
+    assert got == [1]
+
+
+def test_script_finished_counts_skipped(qtbot):
+    from horizon_tool.core.statuses import STATUS_SKIPPED
+    app = QApplication.instance() or QApplication([])
+    win = MainWindow(AppConfig.load(CONFIG))
+    qtbot.addWidget(win)
+    win._reset_stats()
+    win._on_script_finished(1, STATUS_SKIPPED)
+    assert "Bỏ qua: 1" in win.stats_label.text()
+
+
 def test_preview_plugin_reads_selected(qtbot, tmp_path, monkeypatch):
     import horizon_tool.gui.main_window as mw
     monkeypatch.setattr(mw, "STATE_DIR", tmp_path / "state")

@@ -6,6 +6,7 @@ statistics. Long work runs on PipelineWorker so the GUI never freezes.
 """
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QElapsedTimer, QTimer, QUrl
@@ -13,14 +14,16 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
     QLineEdit, QPushButton, QComboBox, QCheckBox, QPlainTextEdit,
-    QTableWidget, QTableWidgetItem, QFileDialog, QGroupBox,
+    QTableWidget, QTableWidgetItem, QFileDialog, QGroupBox, QMessageBox,
 )
 
 from horizon_tool.automation.browser import BrowserSession
 from horizon_tool.automation.chatgpt import ChatGPTWriter
 from horizon_tool.core.account_manager import AccountManager, STATUS_QUOTA, STATUS_READY
-from horizon_tool.core.statuses import STATUS_DONE, STATUS_FAILED
+from horizon_tool.core.statuses import STATUS_DONE, STATUS_FAILED, STATUS_SKIPPED
 from horizon_tool.core.config_loader import AppConfig, load_yaml
+from horizon_tool.core.input_reader import scan_input_folder, filter_by_selection
+from horizon_tool.core.output_manager import OVERWRITE, SKIP, TIMESTAMP
 from horizon_tool.core.plugin_manager import (
     list_plugins, read_plugin_text, apply_variables,
     plugin_hash as compute_plugin_hash,  # aliased so the kwarg name can't shadow it
@@ -225,6 +228,35 @@ class MainWindow(QMainWindow):
             return
         self._launch_run(resume=True)
 
+    def _existing_output_ordinals(self, input_dir: str, output_dir: str, selection: str) -> list[int]:
+        """Ordinals whose output/<n> folder already exists (fresh-run conflict)."""
+        try:
+            scripts, _ = scan_input_folder(Path(input_dir))
+            scripts = filter_by_selection(scripts, selection)
+        except Exception:  # noqa: BLE001 - bad range etc. handled later by the run
+            return []
+        out = Path(output_dir)
+        return [s.ordinal for s in scripts if (out / str(s.ordinal)).exists()]
+
+    def _ask_conflict_policy(self, count: int):
+        """Ask how to handle existing output folders. Returns (policy, suffix) or None if cancelled."""
+        box = QMessageBox(self)
+        box.setWindowTitle("Thư mục output đã tồn tại")
+        box.setText(f"{count} thư mục output đã tồn tại. Bạn muốn làm gì?")
+        overwrite = box.addButton("Ghi đè", QMessageBox.AcceptRole)
+        skip = box.addButton("Bỏ qua", QMessageBox.DestructiveRole)
+        newdir = box.addButton("Tạo mới (hậu tố thời gian)", QMessageBox.ActionRole)
+        box.addButton("Hủy", QMessageBox.RejectRole)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is overwrite:
+            return (OVERWRITE, "")
+        if clicked is skip:
+            return (SKIP, "")
+        if clicked is newdir:
+            return (TIMESTAMP, datetime.now().strftime("%Y%m%d_%H%M%S"))
+        return None
+
     def _launch_run(self, *, resume: bool) -> None:
         if self.worker is not None and self.worker.isRunning():
             return
@@ -234,6 +266,16 @@ class MainWindow(QMainWindow):
         if not input_dir or not output_dir or not plugin_path:
             self.append_log("Hãy chọn thư mục input, output và plugin trước khi chạy.")
             return
+        conflict_policy, run_timestamp = OVERWRITE, ""
+        if not resume:
+            existing = self._existing_output_ordinals(input_dir, output_dir,
+                                                      self.range_edit.text().strip())
+            if existing:
+                choice = self._ask_conflict_policy(len(existing))
+                if choice is None:
+                    self.append_log("Đã hủy chạy (thư mục output đã tồn tại).")
+                    return
+                conflict_policy, run_timestamp = choice
         selectors = load_yaml(SELECTORS_PATH)
         raw_plugin = read_plugin_text(Path(plugin_path))
         plugin_text = apply_variables(raw_plugin, {
@@ -268,6 +310,7 @@ class MainWindow(QMainWindow):
             plugin_name=self.plugin_combo.currentText(),
             plugin_hash=compute_plugin_hash(raw_plugin),
             state_path=str(Path(output_dir) / "run_state.json"), resume=resume,
+            conflict_policy=conflict_policy, run_timestamp=run_timestamp,
             config=self.config.raw, parent=self)
         self.worker.log.connect(self.append_log)
         self.worker.step_status.connect(self._on_step_status)
@@ -364,7 +407,9 @@ class MainWindow(QMainWindow):
         self._refresh_stats_label()
 
     def _on_script_finished(self, ordinal: int, overall: str) -> None:
-        self._stats["failed" if overall == STATUS_FAILED else "done"] += 1
+        key = {STATUS_DONE: "done", STATUS_FAILED: "failed",
+               STATUS_SKIPPED: "skipped"}.get(overall, "done")
+        self._stats[key] += 1
         self._refresh_stats_label()
 
     def _on_account_in_use(self, name: str) -> None:

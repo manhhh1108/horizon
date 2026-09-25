@@ -283,6 +283,44 @@ def test_video_only_failure_counts_script_as_failed(qtbot, tmp_path):
     assert w.wait(2000)
 
 
+def test_conflict_skip_skips_existing_folder(qtbot, tmp_path):
+    from horizon_tool.core.output_manager import SKIP
+    app = QCoreApplication.instance() or QCoreApplication([])
+    (tmp_path / "in").mkdir()
+    (tmp_path / "in" / "1.txt").write_text("k", encoding="utf-8")
+    (tmp_path / "out" / "1").mkdir(parents=True)   # pre-existing conflict
+    mgr = _mgr(tmp_path)
+    calls = {"n": 0}
+    class CountWriter(FakeWriter):
+        def write_script(self, *a, **k):
+            calls["n"] += 1
+            return super().write_script(*a, **k)
+    finished = []
+    w = _worker(tmp_path, mgr, writer_factory=lambda acc: CountWriter(),
+                conflict_policy=SKIP)
+    w.script_finished.connect(lambda o, st: finished.append((o, st)))
+    with qtbot.waitSignal(w.done, timeout=5000):
+        w.start()
+    assert calls["n"] == 0                       # never processed
+    assert finished == [(1, STATUS_SKIPPED)]
+    assert w.wait(2000)
+
+
+def test_conflict_timestamp_uses_suffixed_folder(qtbot, tmp_path):
+    from horizon_tool.core.output_manager import TIMESTAMP
+    app = QCoreApplication.instance() or QCoreApplication([])
+    (tmp_path / "in").mkdir()
+    (tmp_path / "in" / "1.txt").write_text("k", encoding="utf-8")
+    (tmp_path / "out" / "1").mkdir(parents=True)   # conflict -> use 1_<ts>
+    mgr = _mgr(tmp_path)
+    w = _worker(tmp_path, mgr, do_video=False,
+                conflict_policy=TIMESTAMP, run_timestamp="20260925_101500")
+    with qtbot.waitSignal(w.done, timeout=5000):
+        w.start()
+    assert (tmp_path / "out" / "1_20260925_101500" / "1.docx").exists()
+    assert w.wait(2000)
+
+
 def test_exhaustion_does_not_emit_script_finished(qtbot, tmp_path):
     app = QCoreApplication.instance() or QCoreApplication([])
     (tmp_path / "in").mkdir()
