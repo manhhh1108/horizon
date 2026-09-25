@@ -10,6 +10,8 @@ from pathlib import Path
 
 from playwright.sync_api import Locator, Page, sync_playwright
 
+from horizon_tool.core.retry import retry_with_backoff
+
 
 class BrowserSession:
     """A Playwright persistent context plus stable interaction helpers."""
@@ -21,11 +23,13 @@ class BrowserSession:
         headless: bool = False,
         element_timeout_ms: int = 30000,
         retry_attempts: int = 3,
+        retry_backoff_base_seconds: float = 5,
     ) -> None:
         self.profile_dir = Path(profile_dir)
         self.headless = headless
         self.element_timeout_ms = element_timeout_ms
         self.retry_attempts = max(1, retry_attempts)
+        self.retry_backoff_base_seconds = retry_backoff_base_seconds
         self._pw = None
         self._context = None
         self._page: Page | None = None
@@ -72,7 +76,11 @@ class BrowserSession:
         return self.element_timeout_ms if timeout_ms is None else timeout_ms
 
     def goto(self, url: str, timeout_ms: int | None = None) -> None:
-        self.page.goto(url, timeout=self._timeout(timeout_ms))
+        retry_with_backoff(
+            lambda: self.page.goto(url, timeout=self._timeout(timeout_ms)),
+            attempts=self.retry_attempts,
+            base_seconds=self.retry_backoff_base_seconds,
+        )
 
     def wait_for(self, selector: str, timeout_ms: int | None = None) -> Locator:
         """Wait until a selector is present; return its first locator."""
