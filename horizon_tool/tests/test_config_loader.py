@@ -24,3 +24,17 @@ def test_appconfig_exposes_gui_values():
 def test_load_yaml_missing_file_raises():
     with pytest.raises(FileNotFoundError):
         load_yaml(CONFIG_DIR / "does_not_exist.yaml")
+
+
+def test_save_config_roundtrips(tmp_path):
+    from horizon_tool.core.config_loader import save_config
+    original = load_yaml(CONFIG_DIR / "config.yaml")
+    original["timeouts"]["element_wait_seconds"] = 45
+    original["auto_resume"]["enabled"] = True
+    out = tmp_path / "config.yaml"
+    save_config(out, original)
+    reloaded = load_yaml(out)
+    assert reloaded["timeouts"]["element_wait_seconds"] == 45
+    assert reloaded["auto_resume"]["enabled"] is True
+    assert reloaded["grok"]["durations"] == original["grok"]["durations"]
+    assert reloaded["chatgpt"]["image_wrapper_9x16"] == original["chatgpt"]["image_wrapper_9x16"]

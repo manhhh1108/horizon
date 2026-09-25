@@ -32,6 +32,7 @@ PLUGINS_DIR = Path(__file__).resolve().parents[1] / "plugins"
 STATE_DIR = Path(__file__).resolve().parents[1] / "state"
 PROFILES_DIR = Path(__file__).resolve().parents[1] / "profiles"
 SELECTORS_PATH = Path(__file__).resolve().parents[1] / "config" / "selectors.yaml"
+CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "config.yaml"
 STEP_COLUMNS = ["STT", "Tên file", "Kịch bản", "Ảnh 9:16", "Ảnh 16:9", "Video"]
 STEP_COLUMN_INDEX = {"word": 2, "img_9x16": 3, "img_16x9": 4, "video": 5}
 
@@ -96,11 +97,14 @@ class MainWindow(QMainWindow):
         self.plugin_combo = QComboBox()
         reload_btn = QPushButton("Tải lại")
         open_btn = QPushButton("Mở file")
+        preview_btn = QPushButton("Xem trước")
         reload_btn.clicked.connect(self.refresh_plugins)
         open_btn.clicked.connect(self.open_selected_plugin)
+        preview_btn.clicked.connect(self.preview_selected_plugin)
         layout.addWidget(QLabel("Plugin:"))
         layout.addWidget(self.plugin_combo, stretch=1)
         layout.addWidget(open_btn)
+        layout.addWidget(preview_btn)
         layout.addWidget(reload_btn)
 
         self.duration_combo = QComboBox()
@@ -135,6 +139,7 @@ class MainWindow(QMainWindow):
         self.resume_btn.clicked.connect(self.on_resume)
         self.stop_btn.clicked.connect(self.on_stop)
         self.accounts_btn.clicked.connect(self.open_accounts_window)
+        self.settings_btn.clicked.connect(self.open_settings_window)
         for b in (self.start_btn, self.pause_btn, self.resume_btn, self.stop_btn,
                   self.accounts_btn, self.settings_btn):
             layout.addWidget(b)
@@ -167,6 +172,40 @@ class MainWindow(QMainWindow):
         if not path:
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
+    def _selected_plugin_text(self) -> str | None:
+        path = self.plugin_combo.currentData()
+        if not path:
+            return None
+        try:
+            return read_plugin_text(Path(path))
+        except Exception as exc:  # noqa: BLE001
+            return f"(Không đọc được plugin: {exc})"
+
+    def preview_selected_plugin(self) -> None:
+        """Show the selected plugin's raw text in a read-only dialog (PL-04)."""
+        text = self._selected_plugin_text()
+        if text is None:
+            self.append_log("Chưa chọn plugin để xem trước.")
+            return
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QPlainTextEdit
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Xem trước plugin")
+        dlg.resize(720, 600)
+        lay = QVBoxLayout(dlg)
+        viewer = QPlainTextEdit()
+        viewer.setReadOnly(True)
+        viewer.setPlainText(text)
+        lay.addWidget(viewer)
+        dlg.exec()
+
+    def open_settings_window(self) -> None:
+        """Open the Settings dialog bound to config.yaml, reloading on save."""
+        from horizon_tool.gui.settings_window import SettingsWindow
+        dlg = SettingsWindow(self.config, CONFIG_PATH, self)
+        if dlg.exec():
+            self.config = AppConfig.load(CONFIG_PATH)   # reload for next run
+            self.append_log("Đã lưu cài đặt.")
 
     def _pick_folder(self, target: QLineEdit) -> None:
         folder = QFileDialog.getExistingDirectory(self, "Chọn thư mục")
