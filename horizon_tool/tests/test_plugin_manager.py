@@ -94,3 +94,30 @@ def test_apply_variables_replaces_known_and_leaves_rest():
 def test_apply_variables_no_placeholder_is_verbatim():
     text = "No variables here."
     assert apply_variables(text, {"VIDEO_DURATION": "15s"}) == text
+
+
+def test_backup_and_save_plugin_text(tmp_path):
+    from horizon_tool.core.plugin_manager import save_plugin_text, HISTORY_DIRNAME
+    p = tmp_path / "v11.txt"
+    p.write_text("bản cũ", encoding="utf-8")
+    save_plugin_text(p, "bản mới")
+    assert p.read_text(encoding="utf-8") == "bản mới"
+    backups = list((tmp_path / HISTORY_DIRNAME).glob("v11.*.txt"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == "bản cũ"   # old version kept
+
+
+def test_save_plugin_text_rejects_docx(tmp_path):
+    from horizon_tool.core.plugin_manager import save_plugin_text
+    p = tmp_path / "v11.docx"
+    p.write_bytes(b"x")
+    with pytest.raises(ValueError):
+        save_plugin_text(p, "text")
+
+
+def test_save_plugin_text_no_backup_when_new(tmp_path):
+    from horizon_tool.core.plugin_manager import save_plugin_text, HISTORY_DIRNAME
+    p = tmp_path / "new.md"
+    save_plugin_text(p, "nội dung")   # file didn't exist -> no backup
+    assert p.read_text(encoding="utf-8") == "nội dung"
+    assert not (tmp_path / HISTORY_DIRNAME).exists()

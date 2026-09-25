@@ -250,3 +250,22 @@ def test_preview_plugin_reads_selected(qtbot, tmp_path, monkeypatch):
     win.plugin_combo.addItem("v11.txt", userData=str(p))
     win.plugin_combo.setCurrentText("v11.txt")
     assert win._selected_plugin_text() == "NỘI DUNG PLUGIN"
+
+
+def test_edit_plugin_rejects_docx(qtbot, tmp_path, monkeypatch):
+    import horizon_tool.gui.main_window as mw
+    monkeypatch.setattr(mw, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(mw, "PROFILES_DIR", tmp_path / "profiles")
+    app = QApplication.instance() or QApplication([])
+    win = mw.MainWindow(AppConfig.load(CONFIG))
+    qtbot.addWidget(win)
+    p = tmp_path / "v11.docx"
+    p.write_bytes(b"x")
+    win.plugin_combo.addItem("v11.docx", userData=str(p))
+    win.plugin_combo.setCurrentText("v11.docx")
+    shown = {}
+    import PySide6.QtWidgets as W
+    monkeypatch.setattr(W.QMessageBox, "information",
+                        lambda *a, **k: shown.setdefault("msg", True))
+    win.edit_selected_plugin()
+    assert shown.get("msg") is True   # docx -> guided to Word, editor not opened

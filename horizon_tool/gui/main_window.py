@@ -101,13 +101,16 @@ class MainWindow(QMainWindow):
         reload_btn = QPushButton("Tải lại")
         open_btn = QPushButton("Mở file")
         preview_btn = QPushButton("Xem trước")
+        edit_btn = QPushButton("Sửa")
         reload_btn.clicked.connect(self.refresh_plugins)
         open_btn.clicked.connect(self.open_selected_plugin)
         preview_btn.clicked.connect(self.preview_selected_plugin)
+        edit_btn.clicked.connect(self.edit_selected_plugin)
         layout.addWidget(QLabel("Plugin:"))
         layout.addWidget(self.plugin_combo, stretch=1)
         layout.addWidget(open_btn)
         layout.addWidget(preview_btn)
+        layout.addWidget(edit_btn)
         layout.addWidget(reload_btn)
 
         self.duration_combo = QComboBox()
@@ -201,6 +204,22 @@ class MainWindow(QMainWindow):
         viewer.setPlainText(text)
         lay.addWidget(viewer)
         dlg.exec()
+
+    def edit_selected_plugin(self) -> None:
+        """Open the in-tool editor for a .txt/.md plugin (PL-07)."""
+        path = self.plugin_combo.currentData()
+        if not path:
+            self.append_log("Chưa chọn plugin để sửa.")
+            return
+        if Path(path).suffix.lower() not in {".txt", ".md"}:
+            QMessageBox.information(
+                self, "Sửa plugin",
+                "Chỉ sửa được .txt/.md trong tool. Với .docx hãy dùng 'Mở file' (Word).")
+            return
+        from horizon_tool.gui.plugin_editor import PluginEditorDialog
+        dlg = PluginEditorDialog(Path(path), self)
+        if dlg.exec():
+            self.append_log("Đã lưu plugin (bản cũ đã sao lưu vào _history).")
 
     def open_settings_window(self) -> None:
         """Open the Settings dialog bound to config.yaml, reloading on save."""
