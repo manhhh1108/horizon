@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QTimer, QUrl
+from PySide6.QtCore import QElapsedTimer, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 from horizon_tool.automation.browser import BrowserSession
 from horizon_tool.automation.chatgpt import ChatGPTWriter
 from horizon_tool.core.account_manager import AccountManager, STATUS_QUOTA, STATUS_READY
+from horizon_tool.core.statuses import STATUS_DONE, STATUS_FAILED
 from horizon_tool.core.config_loader import AppConfig, load_yaml
 from horizon_tool.core.plugin_manager import (
     list_plugins, read_plugin_text, apply_variables,
@@ -31,6 +32,7 @@ PLUGINS_DIR = Path(__file__).resolve().parents[1] / "plugins"
 STATE_DIR = Path(__file__).resolve().parents[1] / "state"
 PROFILES_DIR = Path(__file__).resolve().parents[1] / "profiles"
 SELECTORS_PATH = Path(__file__).resolve().parents[1] / "config" / "selectors.yaml"
+CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "config.yaml"
 STEP_COLUMNS = ["STT", "Tên file", "Kịch bản", "Ảnh 9:16", "Ảnh 16:9", "Video"]
 STEP_COLUMN_INDEX = {"word": 2, "img_9x16": 3, "img_16x9": 4, "video": 5}
 
@@ -47,6 +49,10 @@ class MainWindow(QMainWindow):
         self.accounts_window: AccountsWindow | None = None
         self._auto_resume_timer = QTimer(self)
         self._auto_resume_timer.timeout.connect(self._auto_resume_tick)
+        self._stats = {"total": 0, "skipped": 0, "done": 0, "failed": 0, "account": "-"}
+        self._elapsed = QElapsedTimer()
+        self._stats_timer = QTimer(self)
+        self._stats_timer.timeout.connect(self._refresh_stats_label)
         self.setWindowTitle("Horizon X Media Tool")
         self.resize(1100, 720)
 
@@ -91,11 +97,14 @@ class MainWindow(QMainWindow):
         self.plugin_combo = QComboBox()
         reload_btn = QPushButton("Tải lại")
         open_btn = QPushButton("Mở file")
+        preview_btn = QPushButton("Xem trước")
         reload_btn.clicked.connect(self.refresh_plugins)
         open_btn.clicked.connect(self.open_selected_plugin)
+        preview_btn.clicked.connect(self.preview_selected_plugin)
         layout.addWidget(QLabel("Plugin:"))
         layout.addWidget(self.plugin_combo, stretch=1)
         layout.addWidget(open_btn)
+        layout.addWidget(preview_btn)
         layout.addWidget(reload_btn)
 
         self.duration_combo = QComboBox()
@@ -130,6 +139,7 @@ class MainWindow(QMainWindow):
         self.resume_btn.clicked.connect(self.on_resume)
         self.stop_btn.clicked.connect(self.on_stop)
         self.accounts_btn.clicked.connect(self.open_accounts_window)
+        self.settings_btn.clicked.connect(self.open_settings_window)
         for b in (self.start_btn, self.pause_btn, self.resume_btn, self.stop_btn,
                   self.accounts_btn, self.settings_btn):
             layout.addWidget(b)
@@ -146,7 +156,8 @@ class MainWindow(QMainWindow):
         return self.log_pane
 
     def _build_stats(self) -> QLabel:
-        self.stats_label = QLabel("Tổng: 0 | Xong: 0 | Bỏ qua: 0 | Lỗi: 0")
+        self.stats_label = QLabel(
+            "Tổng: 0 | Xong: 0 | Bỏ qua: 0 | Lỗi: 0 | Thời gian: 00:00 | Tài khoản: -")
         return self.stats_label
 
     # ----- behavior -------------------------------------------------------
@@ -161,6 +172,40 @@ class MainWindow(QMainWindow):
         if not path:
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
+    def _selected_plugin_text(self) -> str | None:
+        path = self.plugin_combo.currentData()
+        if not path:
+            return None
+        try:
+            return read_plugin_text(Path(path))
+        except Exception as exc:  # noqa: BLE001
+            return f"(Không đọc được plugin: {exc})"
+
+    def preview_selected_plugin(self) -> None:
+        """Show the selected plugin's raw text in a read-only dialog (PL-04)."""
+        text = self._selected_plugin_text()
+        if text is None:
+            self.append_log("Chưa chọn plugin để xem trước.")
+            return
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QPlainTextEdit
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Xem trước plugin")
+        dlg.resize(720, 600)
+        lay = QVBoxLayout(dlg)
+        viewer = QPlainTextEdit()
+        viewer.setReadOnly(True)
+        viewer.setPlainText(text)
+        lay.addWidget(viewer)
+        dlg.exec()
+
+    def open_settings_window(self) -> None:
+        """Open the Settings dialog bound to config.yaml, reloading on save."""
+        from horizon_tool.gui.settings_window import SettingsWindow
+        dlg = SettingsWindow(self.config, CONFIG_PATH, self)
+        if dlg.exec():
+            self.config = AppConfig.load(CONFIG_PATH)   # reload for next run
+            self.append_log("Đã lưu cài đặt.")
 
     def _pick_folder(self, target: QLineEdit) -> None:
         folder = QFileDialog.getExistingDirectory(self, "Chọn thư mục")
@@ -215,6 +260,7 @@ class MainWindow(QMainWindow):
             selection=self.range_edit.text().strip(), plugin_text=plugin_text,
             heading_regexes=selectors["section_headings"], account_manager=self.account_manager,
             writer_factory=writer_factory, video_maker_factory=video_maker_factory,
+            do_script=self.step_script.isChecked(),
             do_9x16=self.step_img_9x16.isChecked(), do_16x9=self.step_thumb_16x9.isChecked(),
             do_video=self.step_video.isChecked(),
             video_duration=self.duration_combo.currentText(),
@@ -227,6 +273,12 @@ class MainWindow(QMainWindow):
         self.worker.step_status.connect(self._on_step_status)
         self.worker.exhausted.connect(self._on_exhausted)
         self.worker.done.connect(self._on_worker_done)
+        self.worker.run_totals.connect(self._on_run_totals)
+        self.worker.script_started.connect(self._on_script_started)
+        self.worker.script_finished.connect(self._on_script_finished)
+        self.worker.account_in_use.connect(self._on_account_in_use)
+        self._reset_stats()
+        self._stats_timer.start(1000)
         self._set_running_state(True)
         self.worker.start()
 
@@ -289,7 +341,43 @@ class MainWindow(QMainWindow):
     def _on_worker_done(self) -> None:
         """Runs on the GUI thread (queued signal) when the worker finishes."""
         self._auto_resume_timer.stop()
+        self._stats_timer.stop()
+        self._refresh_stats_label()
         self._set_running_state(False)
+
+    def _reset_stats(self) -> None:
+        self._stats = {"total": 0, "skipped": 0, "done": 0, "failed": 0, "account": "-"}
+        self._elapsed.restart()
+        self._refresh_stats_label()
+
+    def _refresh_stats_label(self) -> None:
+        s = self._stats
+        secs = self._elapsed.elapsed() // 1000 if self._elapsed.isValid() else 0
+        clock = f"{secs // 60:02d}:{secs % 60:02d}"
+        self.stats_label.setText(
+            f"Tổng: {s['total']} | Xong: {s['done']} | Bỏ qua: {s['skipped']} | "
+            f"Lỗi: {s['failed']} | Thời gian: {clock} | Tài khoản: {s['account']}")
+
+    def _on_run_totals(self, total: int, skipped: int) -> None:
+        self._stats["total"] = total
+        self._stats["skipped"] = skipped
+        self._refresh_stats_label()
+
+    def _on_script_finished(self, ordinal: int, overall: str) -> None:
+        self._stats["failed" if overall == STATUS_FAILED else "done"] += 1
+        self._refresh_stats_label()
+
+    def _on_account_in_use(self, name: str) -> None:
+        self._stats["account"] = name
+        self._refresh_stats_label()
+
+    def _on_script_started(self, ordinal: int, filename: str) -> None:
+        row = self._row_for_ordinal(ordinal)
+        if row is None:
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            self.table.setItem(row, 0, QTableWidgetItem(str(ordinal)))
+        self.table.setItem(row, 1, QTableWidgetItem(filename))   # Tên file column
 
     def _set_running_state(self, running: bool) -> None:
         """Toggle control buttons so a run cannot be started twice.

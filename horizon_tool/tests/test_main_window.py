@@ -5,7 +5,7 @@ from PySide6.QtWidgets import QApplication  # noqa: E402
 from horizon_tool.core.config_loader import AppConfig  # noqa: E402
 from horizon_tool.gui.main_window import MainWindow  # noqa: E402
 from horizon_tool.core.statuses import (  # noqa: E402
-    STATUS_RUNNING, STATUS_DONE, STATUS_REJECTED,
+    STATUS_RUNNING, STATUS_DONE, STATUS_FAILED, STATUS_REJECTED,
 )
 from pathlib import Path  # noqa: E402
 
@@ -174,3 +174,57 @@ def test_step_status_upserts_and_maps_columns(qtbot):
     assert win.table.item(0, 2).text() == STATUS_DONE       # word col
     assert win.table.item(0, 3).text() == STATUS_REJECTED   # 9:16 col
     assert win.table.item(1, 2).text() == STATUS_RUNNING
+
+
+def test_stats_label_updates_from_signals(qtbot):
+    app = QApplication.instance() or QApplication([])
+    win = MainWindow(AppConfig.load(CONFIG))
+    qtbot.addWidget(win)
+    win._reset_stats()
+    win._on_run_totals(3, 1)
+    win._on_script_finished(1, STATUS_DONE)
+    win._on_script_finished(2, STATUS_FAILED)
+    win._on_account_in_use("C1")
+    text = win.stats_label.text()
+    assert "Tổng: 3" in text and "Xong: 1" in text and "Bỏ qua: 1" in text
+    assert "Lỗi: 1" in text and "Tài khoản: C1" in text
+
+
+def test_script_started_fills_filename_column(qtbot):
+    app = QApplication.instance() or QApplication([])
+    win = MainWindow(AppConfig.load(CONFIG))
+    qtbot.addWidget(win)
+    win._on_script_started(7, "7.txt")
+    row = win._row_for_ordinal(7)
+    assert row is not None
+    assert win.table.item(row, 0).text() == "7"
+    assert win.table.item(row, 1).text() == "7.txt"   # Tên file column
+
+
+def test_open_settings_window(qtbot, tmp_path, monkeypatch):
+    import horizon_tool.gui.main_window as mw
+    monkeypatch.setattr(mw, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(mw, "PROFILES_DIR", tmp_path / "profiles")
+    app = QApplication.instance() or QApplication([])
+    win = mw.MainWindow(AppConfig.load(CONFIG))
+    qtbot.addWidget(win)
+    opened = {}
+    # Don't actually exec a modal dialog in tests: stub SettingsWindow.exec.
+    import horizon_tool.gui.settings_window as sw
+    monkeypatch.setattr(sw.SettingsWindow, "exec", lambda self: opened.setdefault("ok", True) or 0)
+    win.open_settings_window()
+    assert opened == {"ok": True}
+
+
+def test_preview_plugin_reads_selected(qtbot, tmp_path, monkeypatch):
+    import horizon_tool.gui.main_window as mw
+    monkeypatch.setattr(mw, "STATE_DIR", tmp_path / "state")
+    monkeypatch.setattr(mw, "PROFILES_DIR", tmp_path / "profiles")
+    app = QApplication.instance() or QApplication([])
+    win = mw.MainWindow(AppConfig.load(CONFIG))
+    qtbot.addWidget(win)
+    p = tmp_path / "v11.txt"
+    p.write_text("NỘI DUNG PLUGIN", encoding="utf-8")
+    win.plugin_combo.addItem("v11.txt", userData=str(p))
+    win.plugin_combo.setCurrentText("v11.txt")
+    assert win._selected_plugin_text() == "NỘI DUNG PLUGIN"

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from ruamel.yaml import YAML
 
 
 def load_yaml(path: Path) -> dict[str, Any]:
@@ -55,3 +56,38 @@ class AppConfig:
     @property
     def runtime_suffix(self) -> str:
         return str(self.raw.get("chatgpt", {}).get("runtime_suffix", ""))
+
+
+def _deep_merge(dst: Any, src: dict) -> None:
+    """Recursively write src's values into dst (a ruamel mapping), in place.
+
+    Nested dicts are merged key-by-key so existing keys/comments in dst are kept;
+    only the keys present in src are updated. Keys in dst but not in src survive.
+    """
+    for key, value in src.items():
+        if isinstance(value, dict) and isinstance(dst.get(key), dict):
+            _deep_merge(dst[key], value)
+        else:
+            dst[key] = value
+
+
+def save_config(path: Path, cfg: dict) -> None:
+    """Persist config changes, preserving comments AND any unknown keys.
+
+    Loads the existing config.yaml with ruamel (round-trip), merges the provided
+    values into it, and writes it back. Keys/comments already in the file that
+    are absent from ``cfg`` are kept — no silent data loss. If the file does not
+    exist yet, a fresh document is written from ``cfg``.
+    """
+    path = Path(path)
+    yaml_rt = YAML()  # round-trip: preserves comments, quoting, key order
+    yaml_rt.preserve_quotes = True
+    if path.exists():
+        with path.open("r", encoding="utf-8") as fh:
+            doc = yaml_rt.load(fh) or {}
+    else:
+        doc = {}
+    _deep_merge(doc, cfg)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as fh:
+        yaml_rt.dump(doc, fh)
