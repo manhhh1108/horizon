@@ -30,6 +30,11 @@ class StateStore:
         self._data: dict[str, Any] = {"scripts": {}}
         self.load()
 
+    def clear(self) -> None:
+        """Reset all state (used to start a fresh, non-resume run)."""
+        self._data = {"scripts": {}}
+        self._save()
+
     def load(self) -> None:
         if not self.path.exists():
             self._data = {"scripts": {}}

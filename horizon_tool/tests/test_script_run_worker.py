@@ -146,3 +146,43 @@ def test_resume_skips_completed_steps(qtbot, tmp_path):
         w2.start()
     assert calls["n"] == 0   # word already done -> not re-run
     assert w2.wait(2000)
+
+
+def test_intra_run_rotation_redoes_only_unfinished_substep(qtbot, tmp_path):
+    # Word + the 9:16 image succeed on account 1; the 16:9 image hits quota.
+    # After switching to account 2, ONLY the 16:9 image is redone — the word
+    # step and the already-done 9:16 image are NOT re-run (fresh run, no resume).
+    app = QCoreApplication.instance() or QCoreApplication([])
+    (tmp_path / "in").mkdir()
+    (tmp_path / "in" / "1.txt").write_text("k", encoding="utf-8")
+    mgr = AccountManager(tmp_path / "a.json", tmp_path / "profiles")
+    mgr.add(SERVICE_CHATGPT, "C1"); mgr.add(SERVICE_CHATGPT, "C2")
+    mgr.add(SERVICE_GROK, "G1")
+    counters = {"word": 0, "img9": 0, "img16": 0}
+    quota = {"fired": False}
+
+    class W:
+        def __init__(self): self.session = FakeSession()
+        def write_script(self, *a, **k):
+            counters["word"] += 1
+            return ScriptResult(raw_text=FULL)
+        def render_image(self, prompt, wrapper, dest_path):
+            if "9x16" in dest_path:
+                counters["img9"] += 1
+                Path(dest_path).write_bytes(b"PNG")
+                return ImageRenderResult(status=STATUS_DONE, path=dest_path)
+            counters["img16"] += 1
+            if not quota["fired"]:
+                quota["fired"] = True
+                raise QuotaExhausted("chatgpt")   # 16:9 hits quota once
+            Path(dest_path).write_bytes(b"PNG")
+            return ImageRenderResult(status=STATUS_DONE, path=dest_path)
+
+    w = _worker(tmp_path, mgr, writer_factory=lambda acc: W(), do_video=False)
+    with qtbot.waitSignal(w.done, timeout=5000):
+        w.start()
+    assert counters["word"] == 1    # word NOT regenerated on the rotation retry
+    assert counters["img9"] == 1    # already-done 9:16 image NOT redone
+    assert counters["img16"] == 2   # only the quota'd 16:9 image retried
+    assert (tmp_path / "out" / "1" / "1_16x9.png").exists()
+    assert w.wait(2000)

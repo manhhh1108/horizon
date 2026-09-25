@@ -117,12 +117,20 @@ class ScriptRunWorker(QThread):
 
     # ----- per-script blocks (run inside rotation) ------------------------
     def _chatgpt_block(self, writer, script, out_dir):
-        """Word + images on one ChatGPT session. Idempotent via state: a rotation
-        retry skips sub-steps already terminal, so only unfinished work reruns.
-        Raises QuotaExhausted (to the rotation helper) when the account is out.
+        """Word + images on one ChatGPT session.
+
+        Idempotent via state: any sub-step already terminal in the state is
+        skipped. This makes a rotation retry (a fresh account after a quota
+        switch mid-block) redo ONLY the unfinished sub-steps — the word step is
+        never regenerated once it succeeded. A fresh (non-resume) run clears the
+        state first, so the skip reflects only this run's progress. Raises
+        QuotaExhausted (to the rotation helper) when the account is out.
         """
         ordinal = script.ordinal
-        if not (self._resume and self._state.is_done(ordinal, "word")):
+        if self._state.is_done(ordinal, "word"):
+            prompts = self._prompts_from_raw(out_dir)   # word done -> reparse prompts
+            self.step_status.emit(ordinal, "word", self._state.get_step(ordinal, "word"))
+        else:
             outcome = process_script(
                 writer=writer, ordinal=ordinal, output_dir=out_dir,
                 plugin_text=self._plugin_text,
@@ -135,9 +143,6 @@ class ScriptRunWorker(QThread):
             if outcome.missing_sections:
                 self.log.emit(f"Kịch bản {ordinal}: thiếu {len(outcome.missing_sections)} section")
             prompts = (outcome.image_9x16_prompt, outcome.thumbnail_16x9_prompt)
-        else:
-            prompts = self._prompts_from_raw(out_dir)   # resumed: reparse
-            self.step_status.emit(ordinal, "word", self._state.get_step(ordinal, "word"))
 
         wraps = self._config.get("chatgpt", {})
         plan = [
@@ -147,7 +152,7 @@ class ScriptRunWorker(QThread):
              wraps.get("image_wrapper_16x9", "{PROMPT}")),
         ]
         for key, enabled, prompt, wrapper in plan:
-            if self._resume and self._state.is_done(ordinal, key):
+            if self._state.is_done(ordinal, key):   # already produced -> don't redo
                 self.step_status.emit(ordinal, key, self._state.get_step(ordinal, key))
                 continue
             if not enabled or not prompt:
@@ -188,6 +193,9 @@ class ScriptRunWorker(QThread):
         for s in skipped:
             self.log.emit(f"Bỏ qua {s.path.name}: {s.reason}")
 
+        if not self._resume:
+            self._state.clear()   # fresh run: skip decisions reflect only this run
+
         report = ReportWriter(self._output_dir / "report.xlsx")
         for script in scripts:
             if self._stop:
@@ -202,6 +210,7 @@ class ScriptRunWorker(QThread):
             out_dir.mkdir(parents=True, exist_ok=True)
             started = time.monotonic()
             account_name = ""
+            stop_after = False
             try:
                 self.step_status.emit(ordinal, "word", STATUS_RUNNING)
                 _, chatgpt_account = run_step_with_rotation(
@@ -217,19 +226,23 @@ class ScriptRunWorker(QThread):
             except AllAccountsExhausted as exc:
                 self.log.emit(f"Hết tài khoản {exc.service} — tạm dừng, đã lưu trạng thái.")
                 self.exhausted.emit(exc.service)
-                break
+                stop_after = True   # end the run after recording this script's row
             except Exception as exc:  # noqa: BLE001 - one script must not stop the run
                 for step in ("word", "img_9x16", "img_16x9", "video"):
                     if not self._state.is_done(ordinal, step):
                         self._state.set_step(ordinal, step, STATUS_FAILED)
                         self.step_status.emit(ordinal, step, STATUS_FAILED)
                 self.log.emit(f"Lỗi kịch bản {ordinal}: {exc}")
-            self._write_report_row(report, script, account_name, started)
+            finally:
+                # Always record the row, including the script that hit exhaustion.
+                self._write_report_row(report, script, account_name, started)
+            if stop_after:
+                break
         report.save()
         self.done.emit()
 
     def _run_video_step(self, ordinal, out_dir):
-        if self._resume and self._state.is_done(ordinal, "video"):
+        if self._state.is_done(ordinal, "video"):   # already terminal -> skip
             self.step_status.emit(ordinal, "video", self._state.get_step(ordinal, "video"))
             return
         have_9x16 = self._state.get_step(ordinal, "img_9x16") == STATUS_DONE
