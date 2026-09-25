@@ -283,6 +283,44 @@ def test_video_only_failure_counts_script_as_failed(qtbot, tmp_path):
     assert w.wait(2000)
 
 
+def test_resume_reuses_timestamp_output_dir(qtbot, tmp_path):
+    # TIMESTAMP fresh run writes to 1_TS; a later Resume must reuse 1_TS (not
+    # fall back to the base "1" folder) so it reads/writes the right files.
+    from horizon_tool.core.output_manager import TIMESTAMP
+    app = QCoreApplication.instance() or QCoreApplication([])
+    (tmp_path / "in").mkdir()
+    (tmp_path / "in" / "1.txt").write_text("k", encoding="utf-8")
+    (tmp_path / "out" / "1").mkdir(parents=True)   # forces TIMESTAMP -> 1_TS
+    mgr = _mgr(tmp_path)
+    phase = {"resume": False}
+
+    class Writer:
+        def __init__(self): self.session = FakeSession()
+        def write_script(self, *a, **k): return ScriptResult(raw_text=FULL)
+        def render_image(self, prompt, wrapper, dest_path):
+            if not phase["resume"]:
+                raise RuntimeError("ảnh lỗi lần đầu")   # fresh run: images FAIL
+            Path(dest_path).write_bytes(b"PNG")
+            return ImageRenderResult(status=STATUS_DONE, path=dest_path)
+
+    w1 = _worker(tmp_path, mgr, writer_factory=lambda acc: Writer(),
+                 do_video=False, conflict_policy=TIMESTAMP, run_timestamp="TS")
+    with qtbot.waitSignal(w1.done, timeout=5000):
+        w1.start()
+    assert w1.wait(2000)
+    ts_dir = tmp_path / "out" / "1_TS"
+    assert (ts_dir / "1.docx").exists()          # fresh work went to the suffixed dir
+
+    phase["resume"] = True
+    w2 = _worker(tmp_path, mgr, writer_factory=lambda acc: Writer(),
+                 do_video=False, resume=True)
+    with qtbot.waitSignal(w2.done, timeout=5000):
+        w2.start()
+    assert w2.wait(2000)
+    assert (ts_dir / "1_9x16.png").exists()                    # resume reused 1_TS
+    assert not (tmp_path / "out" / "1" / "1_9x16.png").exists()  # not the base dir
+
+
 def test_conflict_skip_skips_existing_folder(qtbot, tmp_path):
     from horizon_tool.core.output_manager import SKIP
     app = QCoreApplication.instance() or QCoreApplication([])

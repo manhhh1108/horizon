@@ -219,17 +219,28 @@ class ScriptRunWorker(QThread):
             if self._stop:
                 break
             ordinal = script.ordinal
-            out_dir = prepare_output_dir(
-                self._output_dir, ordinal, self._conflict_policy,
-                suffix=self._run_timestamp or None)
-            if out_dir is None:  # SKIP policy + folder exists
-                self.script_started.emit(ordinal, script.path.name)
-                self.step_status.emit(ordinal, "word", STATUS_SKIPPED)
-                self.log.emit(f"Bỏ qua kịch bản {ordinal}: thư mục output đã tồn tại.")
-                self.script_finished.emit(ordinal, STATUS_SKIPPED)
-                continue
-            self.script_started.emit(ordinal, script.path.name)
             started = time.monotonic()
+            stored = self._state.get_meta(ordinal, "out_dir") if self._resume else None
+            if stored:
+                # Resume reuses the exact folder this script wrote to before
+                # (e.g. a TIMESTAMP-suffixed dir), so raw_response.txt is read
+                # back from the right place regardless of the current policy.
+                out_dir = Path(stored)
+                out_dir.mkdir(parents=True, exist_ok=True)
+            else:
+                out_dir = prepare_output_dir(
+                    self._output_dir, ordinal, self._conflict_policy,
+                    suffix=self._run_timestamp or None)
+                if out_dir is None:  # SKIP policy + folder exists
+                    self.script_started.emit(ordinal, script.path.name)
+                    self.step_status.emit(ordinal, "word", STATUS_SKIPPED)
+                    self.log.emit(
+                        f"Bỏ qua kịch bản {ordinal}: thư mục output đã tồn tại.")
+                    self.script_finished.emit(ordinal, STATUS_SKIPPED)
+                    self._write_report_row(report, script, "", started)  # audit row
+                    continue
+                self._state.set_meta(ordinal, "out_dir", str(out_dir))  # for resume
+            self.script_started.emit(ordinal, script.path.name)
             account_name = ""
             stop_after = False
             try:
